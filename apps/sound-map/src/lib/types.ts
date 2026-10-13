@@ -194,5 +194,9 @@ export interface GenerationRuntime {
   python_available: boolean;
   ace_available: boolean;
   cuda_available: boolean | null;
-  device: "cuda" | "cpu" | null;
+  device: "cuda" | "cpu" | "hf" | null;
+  hf_space?: string | null;
+  hf_available?: boolean;
+  hf_stage?: string | null;
+  hf_quota_remaining_s?: number | null;
 }

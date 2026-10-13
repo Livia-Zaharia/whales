@@ -29,7 +29,7 @@ def main(jobs_path: str):
     sys.path.insert(0, root)
     import torch
 
-    device = runtime_info()["device"]
+    device = spec.get("device") or runtime_info()["device"]
     # ACE-Step reads this setting when its execution module is imported. Its
     # GPU-oriented 600-second default interrupts healthy CPU renders; leave a
     # finite two-hour limit and preserve any explicit server setting.
@@ -44,6 +44,24 @@ def main(jobs_path: str):
     # Limit upstream's download preflight to the main components we actually use;
     # otherwise it downloads the unused turbo and LM checkpoints on CPU servers.
     MAIN_MODEL_COMPONENTS[:] = ["vae", "Qwen3-Embedding-0.6B"]
+
+    # Prepare the selected checkpoint at the same revision the Space uses.
+    # In particular, Turbo lives in the pinned main repo, not the Base repo.
+    if spec.get("main_repo"):
+        from huggingface_hub import snapshot_download
+        from acestep.model_downloader import check_model_exists
+
+        checkpoints = Path(root) / "checkpoints"
+        if not all(check_model_exists(name, checkpoints) for name in MAIN_MODEL_COMPONENTS):
+            snapshot_download(spec["main_repo"], revision=spec["main_revision"], local_dir=checkpoints,
+                              allow_patterns=[name + "/*" for name in MAIN_MODEL_COMPONENTS])
+        if not check_model_exists(spec["model"], checkpoints):
+            if spec["model"] == "acestep-v15-turbo":
+                snapshot_download(spec["main_repo"], revision=spec["main_revision"], local_dir=checkpoints,
+                                  allow_patterns=[spec["model"] + "/*"])
+            else:
+                snapshot_download(spec["model_repo"], revision=spec["model_revision"],
+                                  local_dir=checkpoints / spec["model"])
 
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
     handler = AceStepHandler()
@@ -84,7 +102,9 @@ def main(jobs_path: str):
             shutil.move(result.audios[0]["path"], output)
         previous["jobs"][job["id"]] = job | {
             "instruction": instruction, "seconds": round(elapsed, 2), "seed_used": result.audios[0]["params"].get("seed"),
-            "status": result.status_message,
+            "status": result.status_message, "backend": f"local-{device}", "device_type": device,
+            "ace_git_revision": revision,
+            "model_revision": spec.get("main_revision") if spec["model"] == "acestep-v15-turbo" else spec.get("model_revision"),
         }
         print(f"{job['id']}: {elapsed:.0f} s → {output.name}", flush=True)
         previous |= {"ace_root": root, "ace_git_revision": revision, "model": spec["model"], "offload": offload,

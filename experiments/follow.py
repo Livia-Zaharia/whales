@@ -511,15 +511,28 @@ def ace_jobs(layout: Layout, config: dict, prepared: dict, conditions=CONDITIONS
 
 def run_ace(layout: Layout, config: dict, jobs: list[dict], jobs_path: Path, results_path: Path, ace_root: Path | None = None,
             offload: bool = True, quantization: str | None = "int8_weight_only"):
-    """Run jobs in ACE-Step's own environment; one model load serves them all."""
+    """Run locally, or race the configured ZeroGPU Space against local CPU."""
+    from .follow_hf import backend_settings, race_backends
+
     ace_root = (ace_root or layout.interim / ACE_DIR).resolve()
     python = ace_root / ".venv" / "bin" / "python"
-    if not python.exists():
+    space, backend, _timeout = backend_settings()
+    if not python.exists() and not (space and backend == "auto"):
         raise ValueError(f"No ACE-Step environment at {ace_root}; clone {config['ace_step']['repository']} there and run 'uv sync'")
-    write_json(jobs_path, {"ace_root": str(ace_root), "model": config["ace_step"]["model"], "offload": offload,
-                           "quantization": quantization, "jobs": jobs, "results": str(results_path.resolve())})
+    spec = {"ace_root": str(ace_root), "model": config["ace_step"]["model"], "offload": offload,
+            "quantization": quantization, "jobs": jobs, "results": str(results_path.resolve()),
+            "main_repo": config["ace_step"].get("main_repo"),
+            "model_repo": config["ace_step"].get("model_repo"),
+            "main_revision": config["ace_step"].get("main_revision"),
+            "model_revision": config["ace_step"].get("model_revision")}
+    if backend == "cpu":
+        spec["device"] = "cpu"
+    write_json(jobs_path, spec)
     started = time.perf_counter()
-    subprocess.run([str(python), str(RUNNER), str(jobs_path.resolve())], cwd=ace_root, check=True)
+    if space and backend == "auto":
+        race_backends(spec, jobs_path, python, RUNNER)
+    else:
+        subprocess.run([str(python), str(RUNNER), str(jobs_path.resolve())], cwd=ace_root, check=True)
     print(f"ACE-Step: {len(jobs)} jobs in {time.perf_counter() - started:.0f} s", flush=True)
     return read_json(results_path)
 
@@ -537,6 +550,8 @@ def generate(layout: Layout, config: dict, ace_root: Path | None = None, conditi
 
 app = typer.Typer(help="Music that follows the animal phrase: guides, responses, ACE-Step and alignment tests.", no_args_is_help=True)
 app.add_typer(dataset_app, name="dataset")
+from .follow_space import app as space_app
+app.add_typer(space_app, name="space")
 DataOption = Annotated[Path, typer.Option(help="Root containing input/, interim/, output/.")]
 SourcesOption = Annotated[list[str] | None, typer.Option("--source", help="Limit to these source IDs (repeatable).")]
 

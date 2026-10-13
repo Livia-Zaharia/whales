@@ -56,12 +56,12 @@ async function generationRuntime(): Promise<Response> {
         } catch { /* Playback works without a Python installation. */ }
       }
       const unavailable: GenerationRuntime = { python_available: pythonAvailable, ace_available: false, cuda_available: null, device: null };
-      const executable = join(ROOT, "data", "interim", "tools", "ACE-Step-1.5", ".venv", "bin", "python");
-      if (!(await Bun.file(executable).exists())) return unavailable;
+      if (!pythonAvailable) return unavailable;
       try {
-        // Ask the same PyTorch environment and detector used by the music runner, not nvidia-smi.
-        const child = Bun.spawn([executable, join(ROOT, "experiments", "follow_ace.py"), "--runtime"], {
-          cwd: ROOT, env: process.env, stdout: "pipe", stderr: "ignore", timeout: 8_000,
+        // Checks authenticated HF readiness and the local ACE-Step environment.
+        // The token remains server-side; runtime reports only backend status.
+        const child = Bun.spawn([executablePython, "-m", "experiments.follow_hf", "--runtime"], {
+          cwd: ROOT, env: process.env, stdout: "pipe", stderr: "ignore", timeout: 12_000,
         });
         const output = await new Response(child.stdout).text();
         if (await child.exited !== 0) return unavailable;

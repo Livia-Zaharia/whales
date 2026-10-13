@@ -274,11 +274,19 @@ def ace_step(report: Report, mode: Ace, layout: Layout):
     if mode is Ace.no:
         report.ok("skipped (ORCHESTRA_ACE=no): pieces get their guide and deterministic response")
         return
-    card = gpu()
-    if card is None and mode is Ace.auto:
+    from experiments.follow_hf import backend_settings
+
+    space, backend, _ = backend_settings()
+    # A configured Space always gets a prepared CPU competitor, even on a host
+    # with CUDA. That competitor also works when HF is cold or unreachable.
+    cpu = backend == "cpu" or bool(space and backend == "auto")
+    card = None if cpu else gpu()
+    if card is None and mode is Ace.auto and not cpu:
         report.warn("No NVIDIA GPU found (nvidia-smi), so ACE-Step is skipped and pieces get their guide and "
                     "deterministic response only. Set ORCHESTRA_ACE=yes in .env to enable CPU generation.")
         return
+    if space and backend == "auto":
+        report.note(f"HF ZeroGPU: {space}; preparing local CPU to race it. The first successful result wins.")
     if card is None:
         report.note("No NVIDIA GPU found. ACE-Step will use the CPU; generation is slower than on a GPU.")
     else:
@@ -301,7 +309,10 @@ def ace_step(report: Report, mode: Ace, layout: Layout):
             shutil.rmtree(root, ignore_errors=True)  # only ever a clone this call started
             report.warn("Cloning ACE-Step failed (output above). Check the network and run `uv run start` again.")
             return
-    if card is None or not python.exists():
+    # An existing CUDA environment can run CPU jobs too. Keep it intact when HF
+    # racing is requested on a GPU host; install CPU wheels for fresh fallbacks.
+    needs_cpu_install = card is None and not (cpu and python.exists())
+    if needs_cpu_install or not python.exists():
         env = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}  # it keeps its own .venv
         if card is None:
             # Upstream's Linux uv project pins CUDA wheels even on CPU-only servers.
@@ -419,7 +430,7 @@ stop_app = typer.Typer(add_completion=False)
 def start(
     port: Annotated[int, typer.Option(envvar="ORCHESTRA_PORT", help="Port for the app.")] = 3070,
     host: Annotated[str, typer.Option(envvar="ORCHESTRA_HOST", help="127.0.0.1 serves this machine, 0.0.0.0 the network.")] = "127.0.0.1",
-    ace: Annotated[Ace, typer.Option(envvar="ORCHESTRA_ACE", help="Install ACE-Step 1.5: auto (with an NVIDIA GPU), yes or no.")] = Ace.auto,
+    ace: Annotated[Ace, typer.Option(envvar="ORCHESTRA_ACE", help="Install ACE-Step 1.5: auto (with NVIDIA GPU or HF Space), yes or no.")] = Ace.auto,
 ):
     """Set up whatever is missing, then serve the Whale and Dolphin Orchestra in the background."""
     if state := running():

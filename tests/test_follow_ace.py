@@ -13,7 +13,7 @@ from experiments import follow_ace
 
 
 class AceRuntimeTests(unittest.TestCase):
-    def run_job(self, cuda, timeout=None):
+    def run_job(self, cuda, timeout=None, device=None):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             jobs = root / "jobs.json"
@@ -22,6 +22,7 @@ class AceRuntimeTests(unittest.TestCase):
             jobs.write_text(json.dumps({
                 "ace_root": folder, "model": "acestep-v15-base", "offload": True,
                 "quantization": "int8_weight_only", "results": str(results),
+                "device": device,
                 "jobs": [{"id": "test", "task": "cover", "track": None, "src_audio": "guide.wav",
                           "caption": "ambient music", "duration": 10, "seed": 42, "inference_steps": 2,
                           "guidance_scale": 7, "audio_cover_strength": .6, "output": str(output)}],
@@ -89,6 +90,13 @@ class AceRuntimeTests(unittest.TestCase):
     def test_cpu_preserves_explicit_generation_timeout_before_ace_import(self):
         _, _, _, imported_timeout = self.run_job(False, timeout="1800")
         self.assertEqual(imported_timeout, ["1800"])
+
+    def test_cpu_race_does_not_use_a_local_gpu_even_when_cuda_is_available(self):
+        options, metadata, device_name, imported_timeout = self.run_job(True, device="cpu")
+        self.assertEqual(options["device"], "cpu")
+        self.assertEqual(metadata["device_type"], "cpu")
+        self.assertEqual(imported_timeout, ["7200"])
+        device_name.assert_not_called()
 
     def test_cpu_timeout_reports_the_actual_device_without_gpu_advice(self):
         error = "Music generation timed out after 600 seconds.  This usually means the GPU ran out of VRAM or the diffusion loop stalled."
