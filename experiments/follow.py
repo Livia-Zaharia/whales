@@ -13,6 +13,7 @@ output's own guide against swapped and perturbed guides, never by a global
 style score. Pleasing music is not evidence of what a whale would prefer.
 """
 
+from enum import Enum
 import math
 from pathlib import Path
 import shutil
@@ -28,6 +29,13 @@ from .data import DEFAULT_DATA, Layout, ROOT, digest, get_json, now, read_json, 
 from .follow_dataset import app as dataset_app, preparation_hash
 
 CONFIG = ROOT / "resources" / "follow-music.json"
+
+
+class AceModel(str, Enum):
+    base = "base"
+    turbo = "turbo"
+
+
 RUNNER = Path(__file__).with_name("follow_ace.py")
 ACE_DIR = Path("tools") / "ACE-Step-1.5"  # under data/interim; it keeps its own uv environment
 CONDITIONS = ("prompt", "raw", "guide", "perturbed", "cover-raw", "cover-guide", "cover-perturbed")
@@ -592,6 +600,7 @@ def combine_command(
     ace_root: Annotated[Path | None, typer.Option(help="ACE-Step 1.5 checkout with its own .venv.")] = None,
     offload: Annotated[bool, typer.Option(help="CPU offload between stages; needed when other jobs share the GPU.")] = False,
     rerender: Annotated[bool, typer.Option(help="Render again even when a complete render of this combination exists.")] = False,
+    model_variant: Annotated[AceModel, typer.Option(help="Base for full composition; Turbo for an eight-step preview. Base replaces an earlier Turbo result.")] = AceModel.base,
 ):
     """Combine several sources into one guide, response and optional ACE-Step cover; prints the manifest path last."""
     import json
@@ -600,7 +609,8 @@ def combine_command(
     from .follow_combine import combine
 
     try:
-        print(combine(Layout(data_dir), load_config(), json.loads(spec.read_text(encoding="utf-8")), ace_root, model, offload, reuse=not rerender))
+        print(combine(Layout(data_dir), load_config(), json.loads(spec.read_text(encoding="utf-8")), ace_root, model, offload,
+                      reuse=not rerender, model_variant=model_variant.value))
     except ValueError as error:  # one plain line, so the sound map can show it as is
         print(f"ERROR: {error}", file=sys.stderr)
         raise typer.Exit(2) from error

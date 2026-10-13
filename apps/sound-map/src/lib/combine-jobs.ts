@@ -1,5 +1,5 @@
 import { combineStream } from "./combine-stream.ts";
-import type { CombineMessage, CompositionJob, Spec } from "./types.ts";
+import type { CombineMessage, CompositionJob, ModelVariant, Spec } from "./types.ts";
 
 type Work = (send: (message: CombineMessage) => void, id: string) => Promise<void>;
 export interface TrackedComposition {
@@ -25,13 +25,13 @@ export class CompositionJobs {
     return [...this.jobs.values()].find((job) => job.key === key && (job.info.state === "running" || job.info.state === "queued"));
   }
 
-  start(key: string, spec: Spec, work: Work): TrackedComposition {
+  start(key: string, spec: Spec, work: Work, model: ModelVariant = "base"): TrackedComposition {
     const pending = this.pending(key);
     if (pending) return pending;
     const previous = this.tail;
     const position = [...this.jobs.values()].filter((job) => job.info.state === "running" || job.info.state === "queued").length;
     const info: CompositionJob = { id: crypto.randomUUID(), spec, started_at_utc: new Date().toISOString(),
-      state: position ? "queued" : "running", queue_position: position };
+      state: position ? "queued" : "running", queue_position: position, model };
     const broadcast = combineStream(async (send) => {
       const report = (message: CombineMessage) => {
         if (message.type === "done" || message.type === "error") info.state = message.type;

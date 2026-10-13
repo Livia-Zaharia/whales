@@ -12,6 +12,7 @@ import { contentType, readableLog, safeJoin } from "./src/lib/paths.ts";
 import { SILVER_AUDIO_METHODS } from "./src/lib/silver-audio.ts";
 import { SILVER_AUDIO_RUNTIME } from "./src/lib/silver-performance.ts";
 import type { Catalog, ComboSummary, GenerationRuntime, Manifest, Spec } from "./src/lib/types.ts";
+import { renderedModel } from "./src/lib/model-variant.ts";
 
 declare const WHALES_BUILD_ROOT: string; // replaced by the production build
 const ROOT = resolve(process.env.WHALES_ROOT ?? (typeof WHALES_BUILD_ROOT === "string" ? WHALES_BUILD_ROOT : join(import.meta.dir, "..", "..")));
@@ -148,7 +149,7 @@ async function combos(): Promise<Response> {
       const m = (await file.json()) as Manifest;
       const preset = presets[m.id];
       out.push({ id: m.id, title: preset?.name ?? m.title, created_at_utc: preset?.saved_at_utc ?? m.created_at_utc, duration_s: m.duration_s,
-                 sources: m.parts.map((p) => p.source), ace: Boolean(m.stems.ace), preset: Boolean(preset) });
+                 sources: m.parts.map((p) => p.source), ace: Boolean(m.stems.ace), model: m.stems.ace ? renderedModel(m) : undefined, preset: Boolean(preset) });
     }
   }
   out.sort((a, b) => b.created_at_utc.localeCompare(a.created_at_utc));
@@ -192,7 +193,15 @@ async function combine(request: Request): Promise<Response> {
     return Response.json({ error: "The spec is not valid JSON." }, { status: 400 });
   }
   const url = new URL(request.url);
-  const model = url.searchParams.get("model") !== "0";
+  const requested = url.searchParams.get("model");
+  if (requested !== null && !["0", "1", "base", "turbo"].includes(requested)) {
+    return Response.json({ error: "Choose the Base or Turbo music model." }, { status: 400 });
+  }
+  const model = requested !== "0" && Boolean(spec.ace);
+  const variant = requested === "turbo" ? "turbo" : "base";
+  if (model && variant === "turbo" && spec.ace?.task === "lego") {
+    return Response.json({ error: "Choose Base for adding a track. Turbo supports cover composition." }, { status: 400 });
+  }
   let key: string;
   try {
     // The same defaults and layer ordering used by saved-piece lookup in the UI.
@@ -202,17 +211,24 @@ async function combine(request: Request): Promise<Response> {
   } catch {
     return Response.json({ error: "The combination settings could not be read. Choose recordings and try again." }, { status: 400 });
   }
-  const pending = compositions.pending(key);
+  // Base requests upgrade Turbo instead of joining its lower-step render. A
+  // Turbo request can join Base already in progress, so it cannot downgrade it.
+  const pending = model && variant === "turbo" ? compositions.pending(key + ":base") || compositions.pending(key + ":turbo")
+    : compositions.pending(key + (model ? ":base" : ":recordings"));
   if (pending) return compositionStream(pending);
   const runtime = await (await generationRuntime()).json() as GenerationRuntime;
   if (!runtime.python_available) return Response.json({ error: "The Python composition engine is unavailable. Recordings and saved pieces still play." }, { status: 503 });
+  if (model && variant === "turbo") {
+    const preferred = compositions.pending(key + ":base");
+    if (preferred) return compositionStream(preferred);
+  }
 
   // Reserve synchronously after the runtime probe. Different jobs queue; matching jobs join.
-  const job = compositions.start(key, spec, async (send, id) => {
+  const job = compositions.start(key + (model ? `:${variant}` : ":recordings"), spec, async (send, id) => {
     await mkdir(SPECS, { recursive: true });
     const specPath = join(SPECS, `${id}.json`);
     await Bun.write(specPath, JSON.stringify(spec, null, 2));
-    const args = ["combine", specPath, ...(model ? [] : ["--no-model"])];
+    const args = ["combine", specPath, ...(model ? ["--model-variant", variant] : ["--no-model"])];
     let failure: string | null = null;
     const { code, tail } = await python(args, (line) => {
       if (line.trim().startsWith("ERROR: ")) failure = line.trim().slice(7);
@@ -226,7 +242,7 @@ async function combine(request: Request): Promise<Response> {
     } else {
       send({ type: "error", message: failure || compositionFailure(tail, code) });
     }
-  });
+  }, variant);
   return compositionStream(job);
 }
 

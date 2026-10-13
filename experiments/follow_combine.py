@@ -18,6 +18,7 @@ import json
 import math
 from pathlib import Path
 import shutil
+import tempfile
 
 from .data import Layout, ROOT, now, read_json, write_json
 from .follow import contour_at, directories, onsets, respond, render_guide, run_ace, write_wav
@@ -30,7 +31,7 @@ ARRANGEMENTS = ("layer", "sequence")
 TASKS = ("cover", "lego")
 # Bump when rendering, response or scoring code changes: saved renders with another version are rebuilt
 # on their next request. Ids hash the spec and config, not the code. Manifests without the field are version 1.
-RENDER_VERSION = 4
+RENDER_VERSION = 5
 
 
 def report_progress(percent: float, stage: str):
@@ -201,7 +202,7 @@ def scores(audio, rate: int, parts: list[dict], frame_rate: int, metrics: dict):
             "envelope": [round(float(v), 2) for v in env[::2]], "envelope_rate_hz": frame_rate / 2}
 
 
-def saved_render(folder: Path, output: Path, needs_ace: bool) -> Path | None:
+def saved_render(folder: Path, output: Path, needs_ace: bool, model_variant: str = "base") -> Path | None:
     """The manifest of an earlier render of this exact combination, when every file it lists still exists.
 
     The id hashes the resolved spec and the experiment config, so a match needs no re-rendering. A render made
@@ -214,6 +215,8 @@ def saved_render(folder: Path, output: Path, needs_ace: bool) -> Path | None:
     if manifest.get("render_version", 1) != RENDER_VERSION:
         return None
     if needs_ace and "ace" not in manifest.get("stems", {}):
+        return None
+    if needs_ace and model_variant == "base" and (manifest.get("ace") or {}).get("variant", "base") == "turbo":
         return None
     files = [stem[key] for stem in manifest["stems"].values() for key in ("audio", "image")]
     files += [f for part in manifest["parts"] for f in part["files"].values()]
@@ -230,16 +233,20 @@ def ace_job(combo: dict, config: dict, folder: Path):
 
 
 def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = None, run_model: bool = True, offload: bool = False,
-            reuse: bool = True):
+            reuse: bool = True, model_variant: str = "base"):
     """Write stems, listening files and manifest.json for one combination; returns the manifest path."""
     import numpy as np
 
+    if model_variant not in {"base", "turbo"}:
+        raise ValueError("Choose the Base or Turbo music model")
+    if model_variant == "turbo" and (spec.get("ace") or {}).get("task") == "lego":
+        raise ValueError("Turbo supports cover composition; choose Base for adding a track")
     report_progress(2, "Preparing the selected recordings…")
     _, output = directories(layout)
     prepared = prepared_sources(layout)
     combo = plan(spec, config, prepared)
     folder = output / "combos" / combo["id"]
-    reused = saved_render(folder, output, bool(combo["ace"] and run_model)) if reuse else None
+    reused = saved_render(folder, output, bool(combo["ace"] and run_model), model_variant) if reuse else None
     if reused:
         report_progress(99, "Opening the saved composition…")
         print(f"Reusing the saved render → combos/{combo['id']}/manifest.json")
@@ -285,13 +292,26 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
             (audio,) = listening(wav, MUSIC_BAND, rate, image=False)
             part["files"][name] = str(audio.relative_to(output))
     ace_result = None
+    ace_name = "ace"
     if combo["ace"] and run_model:
+        # Model choice is an execution preference, so the ensemble keeps its id.
+        # Never replace a completed Base piece with a later Turbo preview.
+        previous = read_json(folder / "manifest.json") if (folder / "manifest.json").exists() else {}
+        if "ace" in previous.get("stems", {}) and (previous.get("ace") or {}).get("variant", "base") == "base":
+            model_variant = "base"
+        ace_name = "ace" if model_variant == "base" else "ace-turbo"
+        model_config = config | {"ace_step": config["ace_step"] | {
+            "model": f"acestep-v15-{model_variant}",
+            **({"inference_steps": 8, "guidance_scale": 1.0} if model_variant == "turbo" else {}),
+        }}
         report_progress(30, "Preparing the music model…")
-        ace_wav = folder / "ace.wav"
+        ace_wav = folder / f"{ace_name}.wav"
         if not ace_wav.exists():
-            job = ace_job(combo, config, folder)
-            run_ace(layout, config, [job], folder / "ace-jobs.json", folder / "ace-results.json", ace_root, offload)
-        ace_result = read_json(folder / "ace-results.json")["jobs"][f"combo-{combo['id']}"]
+            job = ace_job(combo, model_config, folder) | {"output": str(ace_wav.resolve())}
+            run_ace(layout, model_config, [job], folder / f"{ace_name}-jobs.json", folder / f"{ace_name}-results.json", ace_root, offload)
+        ace_result = read_json(folder / f"{ace_name}-results.json")["jobs"][f"combo-{combo['id']}"] | {
+            "model": model_config["ace_step"]["model"], "variant": model_variant,
+        }
         report_progress(86, "Preparing the generated music for playback…")
         audio, image = listening(ace_wav, MUSIC_BAND, rate)
         stems["ace"] = {"audio": str(audio.relative_to(output)), "image": str(image.relative_to(output)), "band": list(MUSIC_BAND)}
@@ -300,13 +320,22 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
     results = {}
     for name in ("response", "ace"):
         if name in stems:
-            audio = load_mono(folder / f"{name}.wav", rate)
+            audio = load_mono(folder / f"{ace_name if name == 'ace' else name}.wav", rate)
             results[name] = scores(audio, rate, parts, m["frame_rate_hz"], m)
             if name == "ace":
                 results[name]["leakage"] = leakage(audio, mixes["guide"] * scale, rate)
     manifest = {"id": combo["id"], "title": combo["title"], "created_at_utc": now(), "config_sha256": config["config_sha256"], "render_version": RENDER_VERSION,
                 "spec": combo, "duration_s": combo["duration_s"], "scale": scale, "parts": parts, "stems": stems,
                 "scores": results, "ace": ace_result, "interpretation": config["combination"]["interpretation"]}
-    write_json(folder / "manifest.json", manifest)
+    # Publish only a complete result; readers retain the Turbo manifest during a
+    # Base upgrade, and its separate audio URLs continue to work afterward.
+    if ace_result and ace_result["variant"] == "turbo":
+        preferred = saved_render(folder, output, True, "base")
+        if preferred:
+            return preferred
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder, prefix=".manifest-", suffix=".json", delete=False) as pending:
+        json.dump(manifest, pending, indent=2)
+        pending.write("\n")
+    Path(pending.name).replace(folder / "manifest.json")
     report_progress(99, "Your piece is ready. Opening playback…")
     return folder / "manifest.json"

@@ -226,6 +226,9 @@ h1 em { font: italic 1.12em/.95 var(--serif); letter-spacing: -.04em }
 .segmented input { position: absolute; opacity: 0; pointer-events: none }
 .segmented label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px }
 .dock-actions { grid-area: actions; display: grid; justify-items: center; gap: 8px; min-width: 0 }
+.model-choice { align-self: center; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px; width: min(640px, 100%); font-size: .8rem }
+.model-choice select { max-width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); font: inherit }
+.model-choice p { flex-basis: 100%; text-align: center; line-height: 1.6 }
 .dock-actions:has(#combine[hidden]):has(.status[hidden]) { display: none }
 .status { font-size: .72rem; color: var(--muted); margin-right: auto; min-width: 0 }
 .status.bad { color: var(--bad) }
@@ -433,7 +436,7 @@ input[type="range"] { width: 100% }
 #engine-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px }
 #engine-message { flex: 1 1 360px; max-width: none }
 #engine-notice.disconnected { border-left: 3px solid var(--bad) }
-.static .dock-head, .static .dock-actions, .static .compose-runtime, .static .compose-progress, .static .compose-error, .static .compose-inputs, .static .settings, .static .preset { display: none }
+.static .dock-head, .static .dock-actions, .static .model-choice, .static .compose-runtime, .static .compose-progress, .static .compose-error, .static .compose-inputs, .static .settings, .static .preset { display: none }
 @media (max-width: 1100px) {
   .process-card { padding: 18px }
   .process-card h2 { font-size: 1.4rem }

@@ -84,6 +84,8 @@ export interface PartDraft {
   shift_octaves: number | null;
 }
 
+export type ModelVariant = "base" | "turbo";
+
 export interface AceRequest {
   task: "cover" | "lego";
   caption?: string;
@@ -145,11 +147,12 @@ export interface Manifest {
   created_at_utc: string;
   duration_s: number;
   scale: number;
+  render_version?: number;
   spec: Spec & { id: string; duration_s: number; parts: ManifestPart[] };
   parts: ManifestPart[];
   stems: Partial<Record<StemName, Listening>>;
   scores: Partial<Record<"response" | "ace", OutputScores>>;
-  ace: { caption: string; seed: number; task: string; seconds: number; audio_cover_strength: number } | null;
+  ace: { caption: string; seed: number; task: string; seconds: number; audio_cover_strength: number; model?: string; variant?: ModelVariant } | null;
   interpretation: string;
   preset?: boolean; // set by the server when the user named this piece
 }
@@ -161,6 +164,7 @@ export interface ComboSummary {
   duration_s: number;
   sources: string[];
   ace: boolean;
+  model?: ModelVariant;
   preset?: boolean; // named by the user; unnamed pieces are kept as recent work
 }
 
@@ -170,6 +174,7 @@ export interface CompositionJob {
   started_at_utc: string;
   state: "queued" | "running" | "done" | "error";
   queue_position: number;
+  model?: ModelVariant;
 }
 
 export interface CompositionProgress {

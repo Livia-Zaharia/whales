@@ -9,10 +9,11 @@ import { catalogUrl, comboUrl, combosUrl, fileUrl, isStatic } from "./lib/api.ts
 import { activePulses, soundingParts } from "./lib/pulses.ts";
 import { precomputedPieces, specKey } from "./lib/precomputed.ts";
 import { readComposition } from "./lib/combine-reader.ts";
+import { modelSatisfies, renderedModel } from "./lib/model-variant.ts";
 import { initialCatalog, isCatalog, sameCatalog, saveCatalog } from "./lib/catalog-snapshot.ts";
 import worldCountries from "../../../resources/maps/world-countries-110m.geojson" with { type: "json" };
 import { CATEGORY, THREATENED, TREND_ARROW, TREND_WORD, statusLine, statusOf, voiceInfo, type Status } from "./lib/status.ts";
-import type { Catalog, CompositionJob, CompositionProgress, ComboSummary, GenerationRuntime, Manifest, PrecomputedIndex, Source, Spec, Species, StemName } from "./lib/types.ts";
+import type { Catalog, CompositionJob, CompositionProgress, ComboSummary, GenerationRuntime, Manifest, ModelVariant, PrecomputedIndex, Source, Spec, Species, StemName } from "./lib/types.ts";
 import { AtlasMap, SPECIES_COLOR, sitesOf, type Countries, type MapPart, type Site } from "./map.ts";
 import { Player, type Track } from "./player.ts";
 import { setSilverViewerActive } from "./silver-viewer.ts";
@@ -202,10 +203,13 @@ const player = new Player();
 const preview = new Audio();
 let pieceKey: string | null = null; // the orchestra spec the piece on screen was made from
 const rendered = new Map<string, string>(); // default duos, plus pieces composed or opened this session
+const renderedModels = new Map<string, ModelVariant | null>();
+let selectedModel: ModelVariant = "base";
+try { if (sessionStorage.getItem("whales-compose-model") === "turbo") selectedModel = "turbo"; } catch { /* Base is the default. */ }
 const precomputedIds = new Set<string>();
 async function loadPrecomputed() {
   const index = await json<PrecomputedIndex>(fileUrl("duos.json"), { signal: AbortSignal.timeout(10_000) }).catch(() => null);
-  for (const [key, id] of precomputedPieces(index, catalog)) { rendered.set(key, id); precomputedIds.add(id); }
+  for (const [key, id] of precomputedPieces(index, catalog)) { rendered.set(key, id); renderedModels.set(key, "base"); precomputedIds.add(id); }
   if (dockReady) renderDock();
   if (summaries.size) void loadSaved();
 }
@@ -440,8 +444,16 @@ function renderDock() {
   const combine = $<HTMLButtonElement>("#combine");
   const take = $<HTMLButtonElement>("#take");
   const ready = !busy && ids.length > 0 && issues.length === 0;
-  const fresh = result !== null && key === pieceKey;
-  const available = rendered.has(key);
+  const matchesModel = (manifest: Manifest) => !composer!.aceOn || Boolean(manifest.stems.ace) && modelSatisfies(renderedModel(manifest), selectedModel);
+  const fresh = result !== null && key === pieceKey && matchesModel(result);
+  const savedModel = renderedModels.get(key);
+  const available = rendered.has(key) && (!composer.aceOn || Boolean(savedModel) && modelSatisfies(savedModel!, selectedModel));
+  const upgrade = result !== null && key === pieceKey && !fresh && Boolean(result.stems.ace);
+  $<HTMLSelectElement>("#compose-model").disabled = busy || !composer.aceOn;
+  $<HTMLSelectElement>("#compose-model").value = selectedModel;
+  $<HTMLElement>("#compose-model-note").textContent = selectedModel === "base"
+    ? "Base uses 50 steps and guidance controls. It takes longer, especially on CPU. Its completed result replaces a Turbo preview of the same ensemble."
+    : "Turbo makes an eight-step preview quickly. Musical detail and instruments can differ from Base. An existing Base result is reused.";
   const canGenerate = !isStatic && !runtimeFailed && !catalogUnavailable && generationRuntime?.python_available !== false
     && (!composer.aceOn || generationRuntime?.ace_available !== false);
   $<HTMLElement>("#compose-progress").hidden = !busy;
@@ -451,7 +463,7 @@ function renderDock() {
   $("#dock").setAttribute("aria-busy", String(busy));
   combine.disabled = !ready || fresh || (!available && !canGenerate);
   combine.textContent = busy ? compositionJob?.state === "queued" ? "Queued…" : "Composing…"
-    : compositionError ? "Try again" : available ? "Play saved piece" : result ? "Update piece" : "Compose piece";
+    : compositionError ? "Try again" : available ? "Play saved piece" : upgrade ? "Compose with Base" : result ? "Update piece" : "Compose piece";
   combine.hidden = fresh && !busy;
   combine.classList.toggle("pending", ready && !fresh && result !== null);
   take.disabled = !ready || !composer.aceOn || !canGenerate;
@@ -472,6 +484,7 @@ function renderDock() {
     : issues.length ? issues[0]!
     : fresh ? `“${pieceTitle(result!.title, result!.parts.map((p) => p.source))}” is ready to play.`
     : available ? "This piece is ready to play."
+    : upgrade ? "Base will replace the Turbo preview when it is ready."
     : result ? `Changed since “${pieceTitle(result.title, result.parts.map((p) => p.source))}”.`
     : `${ids.length} player${ids.length === 1 ? "" : "s"} ready.`);
 }
@@ -568,6 +581,13 @@ $<HTMLButtonElement>("#clear").addEventListener("click", () => {
 });
 $<HTMLButtonElement>("#combine").addEventListener("click", () => void compose());
 $<HTMLButtonElement>("#take").addEventListener("click", () => void compose(true));
+$<HTMLSelectElement>("#compose-model").addEventListener("change", () => {
+  if (busy) return;
+  selectedModel = $<HTMLSelectElement>("#compose-model").value === "turbo" ? "turbo" : "base";
+  try { sessionStorage.setItem("whales-compose-model", selectedModel); } catch { /* Selection still works. */ }
+  compositionError = "";
+  renderDock();
+});
 
 /* ---------- compose ---------- */
 async function compose(newTake = false) {
@@ -575,11 +595,12 @@ async function compose(newTake = false) {
   if (newTake) composer.newSeed();
   const spec = composer.spec();
   const key = specKey(spec, catalog);
-  if (!newTake && result && key === pieceKey) return;
+  if (!newTake && result && key === pieceKey && (!spec.ace || result.stems.ace && modelSatisfies(renderedModel(result), selectedModel))) return;
   const known = newTake ? undefined : rendered.get(key);
   if (known) {
     const manifest = await piece(known).catch(() => null);
-    if (manifest) {
+    if (manifest && (!spec.ace || manifest.stems.ace && modelSatisfies(renderedModel(manifest), selectedModel))) {
+      renderedModels.set(key, manifest.stems.ace ? renderedModel(manifest) : null);
       pieceKey = key;
       showResult(manifest, { seat: false, autoplay: true });
       return;
@@ -600,7 +621,7 @@ async function compose(newTake = false) {
   log.textContent = "";
   $<HTMLElement>("#compose-progress").scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
   try {
-    const response = await fetch(`/api/combine?model=${spec.ace ? 1 : 0}`, { method: "POST", body: JSON.stringify(spec) });
+    const response = await fetch(`/api/combine?model=${spec.ace ? selectedModel : "0"}`, { method: "POST", body: JSON.stringify(spec) });
     await followComposition(response);
   } catch (error) {
     compositionError = `Composition failed: ${(error as Error).message}`;
@@ -647,6 +668,7 @@ async function followComposition(initial: Response, restore = false) {
       await readComposition(response, (message) => {
         if (message.type === "job") {
           compositionJob = message.job;
+          selectedModel = message.job.model ?? "base";
           rememberJob(message.job.id);
           if (!restored) {
             restored = true;
@@ -669,6 +691,7 @@ async function followComposition(initial: Response, restore = false) {
           rememberJob(null);
           pieceKey = specKey(compositionJob?.spec ?? message.manifest.spec, catalog);
           rendered.set(pieceKey, message.manifest.id);
+          renderedModels.set(pieceKey, message.manifest.stems.ace ? renderedModel(message.manifest) : null);
           compositionError = "";
           busy = false;
           $<HTMLElement>("#compose-inputs").hidden = true;
@@ -719,6 +742,7 @@ function showResult(manifest: Manifest | null, options: { seat: boolean; autopla
     composer.load(manifest);
     pieceKey = specKey(composer.spec(), catalog);
     rendered.set(pieceKey, manifest.id);
+    renderedModels.set(pieceKey, manifest.stems.ace ? renderedModel(manifest) : null);
   }
   partOn = manifest.parts.map(() => true);
   stemOn.ace = Boolean(manifest.stems.ace);
@@ -726,7 +750,7 @@ function showResult(manifest: Manifest | null, options: { seat: boolean; autopla
   if (isStatic || !composer) map.setCombination(resultParts());
   const section = $<HTMLElement>("#result");
   section.hidden = false;
-  $<HTMLElement>("#result-eyebrow").textContent = `Current piece / ${manifest.spec.arrangement === "layer" ? "Together" : "In sequence"} · ${manifest.parts.length} player${manifest.parts.length === 1 ? "" : "s"} · ${manifest.duration_s.toFixed(1)} s`;
+  $<HTMLElement>("#result-eyebrow").textContent = `Current piece / ${manifest.spec.arrangement === "layer" ? "Together" : "In sequence"} · ${manifest.parts.length} player${manifest.parts.length === 1 ? "" : "s"} · ${manifest.duration_s.toFixed(1)} s${manifest.stems.ace ? ` · ${capital(renderedModel(manifest))}` : ""}`;
   $<HTMLElement>("#result-title").textContent = pieceTitle(manifest.title, manifest.parts.map((p) => p.source));
   const resultNote = document.querySelector<HTMLElement>("#result-note");
   if (resultNote) resultNote.textContent = manifest.interpretation;

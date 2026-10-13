@@ -120,6 +120,17 @@ immediately on either kind of server. Compose shows
 an activity bar and the engine's current stage, with a CPU notice only when the
 server detects no CUDA.
 
+Choose **Base** for a full composition (50 steps and guidance controls) or
+**Turbo** for an eight-step preview. The models can choose different instruments
+and musical detail. Base remains the default. A Base render replaces the saved
+Turbo result for the same ensemble; later Turbo requests reuse that Base result.
+Existing listeners can finish playing the earlier Turbo audio during an upgrade.
+The command-line equivalent is `main.py follow combine SPEC --model-variant turbo`.
+On a shared CPU server, set `OMP_NUM_THREADS` and `MKL_NUM_THREADS` to the desired
+compute-thread count. OpenMP binding can reserve a core for other services: on an
+eight-core host, seven threads with `OMP_PROC_BIND=close` and
+`OMP_PLACES={1},{2},{3},{4},{5},{6},{7}` leaves core 0 available.
+
 The prepared dataset is built from existing extracted audio and measurements:
 
 ```bash

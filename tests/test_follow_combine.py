@@ -191,6 +191,55 @@ class CombineTests(unittest.TestCase):
         from experiments.follow_combine import RENDER_VERSION
         self.assertEqual(read_json(first)["render_version"], RENDER_VERSION)  # renders from older code are rebuilt
 
+    def test_turbo_is_upgraded_by_base_and_cannot_replace_it_afterward(self):
+        from unittest.mock import patch
+        from experiments.data import read_json, write_json
+        from experiments.follow_combine import combine
+
+        spec = {"parts": [{"source": "hb", "trim_s": [0, 4]}], "ace": {"task": "cover"}}
+        calls = []
+
+        def model(layout, config, jobs, jobs_path, results_path, *args):
+            job = jobs[0]
+            calls.append((config["ace_step"]["model"], job["inference_steps"], job["guidance_scale"]))
+            shutil.copyfile(job["src_audio"], job["output"])
+            write_json(results_path, {"jobs": {job["id"]: job | {"seconds": 1}}})
+
+        with patch("experiments.follow_combine.run_ace", side_effect=model):
+            path = combine(self.layout, self.config, spec, model_variant="turbo")
+            turbo = read_json(path)
+            turbo_audio = self.layout.output / "follow" / turbo["stems"]["ace"]["audio"]
+            self.assertEqual(turbo["ace"]["variant"], "turbo")
+            self.assertEqual(combine(self.layout, self.config, spec, model_variant="base"), path)
+            base = read_json(path)
+            self.assertEqual(base["ace"]["variant"], "base")
+            self.assertNotEqual(base["stems"]["ace"]["audio"], turbo["stems"]["ace"]["audio"])
+            self.assertTrue(turbo_audio.exists())  # An existing listener keeps its audio URL.
+            self.assertEqual(combine(self.layout, self.config, spec, model_variant="turbo"), path)
+            self.assertEqual(read_json(path), base)
+        self.assertEqual(calls, [("acestep-v15-turbo", 8, 1.0), ("acestep-v15-base", 50, 7.0)])
+
+    def test_failed_base_upgrade_preserves_the_finished_turbo_piece(self):
+        from unittest.mock import patch
+        from experiments.data import read_json, write_json
+        from experiments.follow_combine import combine
+
+        spec = {"parts": [{"source": "hb", "trim_s": [0, 4]}], "ace": {"task": "cover"}}
+
+        def model(layout, config, jobs, jobs_path, results_path, *args):
+            job = jobs[0]
+            shutil.copyfile(job["src_audio"], job["output"])
+            write_json(results_path, {"jobs": {job["id"]: job | {"seconds": 1}}})
+
+        with patch("experiments.follow_combine.run_ace", side_effect=model):
+            path = combine(self.layout, self.config, spec, model_variant="turbo")
+        original = read_json(path)
+        with patch("experiments.follow_combine.run_ace", side_effect=RuntimeError("model failed")):
+            with self.assertRaisesRegex(RuntimeError, "model failed"):
+                combine(self.layout, self.config, spec, model_variant="base")
+        self.assertEqual(read_json(path), original)
+        self.assertEqual(combine(self.layout, self.config, spec, model_variant="turbo"), path)
+
     def test_catalog_lists_located_sources_and_dataset_points(self):
         from experiments.data import read_json
         from experiments.follow_combine import catalog
