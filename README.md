@@ -113,7 +113,10 @@ For a CPU-only installation, run `uv run start --ace yes` (or set
 ACE-Step's own environment. Only the selected music model, VAE and text encoder
 are downloaded (about 6 GB); the unused LM and turbo model are skipped.
 CPU generation needs sufficient RAM for the model and takes
-longer; finished pieces play immediately on either kind of server. Compose shows
+longer. CPU jobs have a two-hour generation limit by default; override it in
+`.env` with `ACESTEP_GENERATION_TIMEOUT` (seconds). CUDA keeps ACE-Step's default
+ten-minute limit unless that setting is supplied. Finished pieces play
+immediately on either kind of server. Compose shows
 an activity bar and the engine's current stage, with a CPU notice only when the
 server detects no CUDA.
 

@@ -28,6 +28,13 @@ def main(jobs_path: str):
     root = spec["ace_root"]
     sys.path.insert(0, root)
     import torch
+
+    device = runtime_info()["device"]
+    # ACE-Step reads this setting when its execution module is imported. Its
+    # GPU-oriented 600-second default interrupts healthy CPU renders; leave a
+    # finite two-hour limit and preserve any explicit server setting.
+    if device == "cpu":
+        os.environ.setdefault("ACESTEP_GENERATION_TIMEOUT", "7200")
     from acestep.handler import AceStepHandler
     from acestep.inference import GenerationConfig, GenerationParams, generate_music
     from acestep.llm_inference import LLMHandler
@@ -41,7 +48,6 @@ def main(jobs_path: str):
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
     handler = AceStepHandler()
     started = time.perf_counter()
-    device = runtime_info()["device"]
     offload = spec["offload"] if device == "cuda" else False
     quantization = spec["quantization"] if device == "cuda" else None
     print(f"ACE-Step: loading the music model on {device.upper()}" + ("; CPU generation is slower" if device == "cpu" else ""), flush=True)
@@ -71,7 +77,8 @@ def main(jobs_path: str):
             result = generate_music(handler, llm, params, config, save_dir=scratch, progress=report_progress)
             elapsed = time.perf_counter() - began
             if not result.success or not result.audios:
-                raise SystemExit(f"ERROR: ACE-Step: {result.error or result.status_message}")
+                message = generation_failure(result.error or result.status_message, device)
+                raise SystemExit(f"ERROR: ACE-Step: {message}")
             output = Path(job["output"])
             output.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(result.audios[0]["path"], output)
@@ -85,6 +92,13 @@ def main(jobs_path: str):
                      "device_type": device, "device": torch.cuda.get_device_name(0) if device == "cuda" else "CPU",
                      "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES")}
         results_path.write_text(json.dumps(previous, indent=2) + "\n", encoding="utf-8")
+
+
+def generation_failure(message: str, device: str) -> str:
+    if device == "cpu" and message.startswith("Music generation timed out after "):
+        # Upstream's timeout explanation assumes CUDA, even on CPU servers.
+        return message.split(".", 1)[0].replace("Music generation", "CPU music generation", 1) + ". Try a shorter piece."
+    return message
 
 
 def report_progress(value=None, desc=None, **_kwargs):
