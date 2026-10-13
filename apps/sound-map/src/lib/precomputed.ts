@@ -18,6 +18,8 @@ export function specKey(spec: Spec, catalog: Catalog): string {
 }
 
 export function precomputedPieces(index: PrecomputedIndex | null, catalog: Catalog): Map<string, string> {
-  if (!index || index.config_sha256 !== catalog.config_sha256 || index.render_version !== catalog.render_version) return new Map();
+  // Renderer changes invalidate generation caches in Python, but finished audio
+  // stays playable when the recordings and composition settings are unchanged.
+  if (!index || index.config_sha256 !== catalog.config_sha256) return new Map();
   return new Map(index.pieces.map((p) => [specKey(p.spec, catalog), p.id]));
 }

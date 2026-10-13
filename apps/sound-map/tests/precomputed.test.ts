@@ -16,12 +16,16 @@ describe("precomputed playback lookup", () => {
     const actualCatalog = await Bun.file(new URL("../demo/follow/catalog.json", import.meta.url)).json() as Catalog;
     const bundled = await Bun.file(new URL("../demo/follow/duos.json", import.meta.url)).json() as PrecomputedIndex;
     const pieces = precomputedPieces(bundled, actualCatalog);
+    const updatedCatalog = { ...actualCatalog, render_version: (actualCatalog.render_version ?? 1) + 3 };
+    const legacyPieces = precomputedPieces(bundled, updatedCatalog);
     const sources = new Map(actualCatalog.sources.map((s) => [s.id, s]));
     expect(pieces.size).toBe(actualCatalog.sources.length * (actualCatalog.sources.length - 1) / 2);
+    expect(legacyPieces.size).toBe(pieces.size);
     for (const piece of bundled.pieces) {
       const parts = piece.spec.parts.map((p) => draftFor(sources.get(p.source)!));
       const defaults = buildSpec("", "layer", 1, parts, { task: "cover", audio_cover_strength: actualCatalog.combination.audio_cover_strength });
       expect(pieces.get(specKey(defaults, actualCatalog))).toBe(piece.id);
+      expect(legacyPieces.get(specKey(defaults, updatedCatalog))).toBe(piece.id);
       expect(pieces.get(specKey({ ...defaults, parts: [...defaults.parts].reverse() }, actualCatalog))).toBe(piece.id);
     }
   });
@@ -44,9 +48,13 @@ describe("precomputed playback lookup", () => {
     expect(pieces.has(specKey({ ...request, arrangement: "sequence" }, catalog))).toBe(false);
   });
 
-  test("changed configuration or renderer does not reuse stale bundled pieces", () => {
+  test("changed recording configuration does not reuse bundled pieces", () => {
     expect(precomputedPieces({ ...index, config_sha256: "old" }, catalog).size).toBe(0);
-    expect(precomputedPieces({ ...index, render_version: 3 }, catalog).size).toBe(0);
     expect(precomputedPieces(null, catalog).size).toBe(0);
+  });
+
+  test("finished legacy duos remain ready after a renderer update", () => {
+    const pieces = precomputedPieces({ ...index, render_version: 3 }, catalog);
+    expect(pieces.get(specKey(request, catalog))).toBe("123456abcdef");
   });
 });
