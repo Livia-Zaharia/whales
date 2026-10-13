@@ -4,12 +4,15 @@
 import { Composer } from "./composer.ts";
 import { instrumentIcon } from "./instruments.ts";
 import { SPECIES } from "./lib/species.ts";
-import { renderIndividualTracks, renderLanes, renderScores, partColor } from "./lanes.ts";
+import { renderIndividualTracks, renderLanes, renderScores, renderSelectedTracks, partColor } from "./lanes.ts";
 import { catalogUrl, comboUrl, combosUrl, fileUrl, isStatic } from "./lib/api.ts";
 import { activePulses, soundingParts } from "./lib/pulses.ts";
 import { precomputedPieces, specKey } from "./lib/precomputed.ts";
+import { readComposition } from "./lib/combine-reader.ts";
+import { initialCatalog, isCatalog, sameCatalog, saveCatalog } from "./lib/catalog-snapshot.ts";
+import worldCountries from "../../../resources/maps/world-countries-110m.geojson" with { type: "json" };
 import { CATEGORY, THREATENED, TREND_ARROW, TREND_WORD, statusLine, statusOf, voiceInfo, type Status } from "./lib/status.ts";
-import type { Catalog, CombineMessage, ComboSummary, GenerationRuntime, Manifest, PrecomputedIndex, Source, Species, StemName } from "./lib/types.ts";
+import type { Catalog, CompositionJob, CompositionProgress, ComboSummary, GenerationRuntime, Manifest, PrecomputedIndex, Source, Spec, Species, StemName } from "./lib/types.ts";
 import { AtlasMap, SPECIES_COLOR, sitesOf, type Countries, type MapPart, type Site } from "./map.ts";
 import { Player, type Track } from "./player.ts";
 import { setSilverViewerActive } from "./silver-viewer.ts";
@@ -106,13 +109,6 @@ const requestedView = new URL(location.href).searchParams.get("view") as View | 
 const reachable = (view: View | null): view is View => Boolean(view && viewTabs.some((tab) => tab.dataset.view === view));
 showView(reachable(requestedView) ? requestedView : "concert");
 
-function loadError(error: unknown): never {
-  const note = $<HTMLElement>("#load-error");
-  note.hidden = false;
-  note.textContent = `The recordings could not load. Please reload the page. ${(error as Error).message}`;
-  throw error;
-}
-
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? `${url}: ${response.status}`);
@@ -121,20 +117,66 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 
 let generationRuntime: GenerationRuntime | null = null;
 let runtimeFailed = false;
+let catalogUnavailable = false;
+let catalogUpdate: Catalog | null = null;
+let catalogEtag: string | null = null;
 let dockReady = false;
 function showEngineNotice() {
   const note = $<HTMLElement>("#engine-notice");
-  note.textContent = isStatic
+  const unavailable = runtimeFailed || catalogUnavailable;
+  const message = isStatic && catalogUnavailable
+    ? "The recording catalog could not be loaded. The map shows the bundled recording locations. Reload when the files are available."
+    : isStatic
     ? "Playback only: the Python composition engine is not connected. Recordings and saved pieces remain playable."
+    : catalogUnavailable
+    ? "The recording server cannot be reached. The map shows the bundled recording locations. Audio and new compositions need the server."
     : runtimeFailed
-    ? "The composition service could not be reached. New pieces cannot be created here."
+    ? "The composition service cannot be reached. The map remains available; existing audio files can still play if the file server is reachable."
     : generationRuntime?.python_available === false
     ? "The Python composition engine is unavailable. You can still listen to recordings and saved pieces."
     : generationRuntime?.ace_available === false
     ? "The music model is unavailable. Recorded voices, saved pieces, musical guides and constructed responses remain available."
     : "";
-  note.hidden = !note.textContent;
+  $<HTMLElement>("#engine-message").textContent = [message, catalogUpdate ? "Updated recording details are available." : ""].filter(Boolean).join(" ");
+  $<HTMLButtonElement>("#connection-retry").hidden = isStatic || !unavailable;
+  $<HTMLButtonElement>("#catalog-update").hidden = !catalogUpdate;
+  note.hidden = !message && !catalogUpdate;
+  note.classList.toggle("disconnected", unavailable);
 }
+
+async function refreshCatalog() {
+  try {
+    const response = await fetch(catalogUrl(), { headers: catalogEtag ? { "if-none-match": catalogEtag } : {}, signal: AbortSignal.timeout(10_000) });
+    if (response.status !== 304) {
+      if (!response.ok) throw new Error("The recording catalog is unavailable.");
+      const update: unknown = await response.json();
+      if (!isCatalog(update)) throw new Error("The recording catalog could not be read.");
+      catalogUpdate = sameCatalog(catalog, update) ? null : update;
+      catalogEtag = response.headers.get("etag");
+    }
+    catalogUnavailable = false;
+  } catch {
+    catalogUnavailable = true;
+  }
+  showEngineNotice();
+  if (dockReady) renderDock();
+}
+
+$<HTMLButtonElement>("#connection-retry").addEventListener("click", () => {
+  void refreshCatalog();
+  void refreshRuntime();
+  void loadSaved();
+});
+$<HTMLButtonElement>("#catalog-update").addEventListener("click", () => {
+  if (!catalogUpdate) return;
+  try {
+    saveCatalog(sessionStorage, catalogUpdate);
+    if (composer?.count) sessionStorage.setItem("whales-catalog-draft", JSON.stringify(composer.spec()));
+    location.reload();
+  } catch {
+    playbackError("The browser could not save the updated recording catalog. Please allow browser storage and try again.");
+  }
+});
 async function refreshRuntime() {
   try {
     generationRuntime = await json<GenerationRuntime>("/api/runtime", { signal: AbortSignal.timeout(10_000) });
@@ -151,18 +193,33 @@ if (!isStatic) {
   setInterval(() => { if (document.visibilityState === "visible") void refreshRuntime(); }, 30_000);
 }
 
-const catalog = await json<Catalog>(catalogUrl()).catch(loadError);
-const countries = await json<Countries>(fileUrl(catalog.countries)).catch(loadError);
+const catalog = (() => { try { return initialCatalog(sessionStorage); } catch { return initialCatalog(); } })();
+const countries: Countries = worldCountries;
 const sites = sitesOf(catalog.sources);
 const sourceById = new Map(catalog.sources.map((s) => [s.id, s]));
 const siteOf = new Map(sites.flatMap((site) => site.sources.map((s) => [s.id, site] as const)));
 const player = new Player();
 const preview = new Audio();
 let pieceKey: string | null = null; // the orchestra spec the piece on screen was made from
-const duoIndex = await json<PrecomputedIndex>(fileUrl("duos.json")).catch(() => null);
-const rendered = precomputedPieces(duoIndex, catalog); // default duos, plus pieces composed or opened this session
-const precomputedIds = new Set(rendered.values());
+const rendered = new Map<string, string>(); // default duos, plus pieces composed or opened this session
+const precomputedIds = new Set<string>();
+async function loadPrecomputed() {
+  const index = await json<PrecomputedIndex>(fileUrl("duos.json"), { signal: AbortSignal.timeout(10_000) }).catch(() => null);
+  for (const [key, id] of precomputedPieces(index, catalog)) { rendered.set(key, id); precomputedIds.add(id); }
+  if (dockReady) renderDock();
+  if (summaries.size) void loadSaved();
+}
 let busy = false;
+let compositionJob: CompositionJob | null = null;
+let compositionProgress: CompositionProgress | null = null;
+let compositionError = "";
+const JOB_STORAGE = "whales-composition-job";
+const rememberJob = (id: string | null) => {
+  try {
+    if (id) sessionStorage.setItem(JOB_STORAGE, id);
+    else sessionStorage.removeItem(JOB_STORAGE);
+  } catch { /* Composition still works when browser storage is disabled. */ }
+};
 let flash = "";
 let flashTimer = 0;
 let openSiteKey: string | null = null;
@@ -385,20 +442,30 @@ function renderDock() {
   const ready = !busy && ids.length > 0 && issues.length === 0;
   const fresh = result !== null && key === pieceKey;
   const available = rendered.has(key);
-  const canGenerate = !isStatic && !runtimeFailed && generationRuntime?.python_available !== false
+  const canGenerate = !isStatic && !runtimeFailed && !catalogUnavailable && generationRuntime?.python_available !== false
     && (!composer.aceOn || generationRuntime?.ace_available !== false);
   $<HTMLElement>("#compose-progress").hidden = !busy;
+  $<HTMLElement>("#compose-error").hidden = !compositionError;
+  $<HTMLElement>("#compose-error").textContent = compositionError;
   $<HTMLElement>("#compose-runtime").hidden = !canGenerate || generationRuntime?.cuda_available !== false || !composer.aceOn || ((fresh || available) && !busy) || ids.length === 0;
   $("#dock").setAttribute("aria-busy", String(busy));
   combine.disabled = !ready || fresh || (!available && !canGenerate);
-  combine.textContent = busy ? "Composing…" : available ? "Play saved piece" : result ? "Update piece" : "Compose piece";
+  combine.textContent = busy ? compositionJob?.state === "queued" ? "Queued…" : "Composing…"
+    : compositionError ? "Try again" : available ? "Play saved piece" : result ? "Update piece" : "Compose piece";
   combine.hidden = fresh && !busy;
   combine.classList.toggle("pending", ready && !fresh && result !== null);
   take.disabled = !ready || !composer.aceOn || !canGenerate;
   take.hidden = ids.length === 0;
   $<HTMLButtonElement>("#clear").disabled = busy || ids.length === 0;
-  if (busy) return;
   const status = $<HTMLElement>("#status");
+  if (busy) {
+    status.hidden = false;
+    status.classList.remove("bad");
+    status.textContent = compositionJob?.state === "queued" ? "Your selected recordings are queued for composition."
+      : "Composing from your selected recordings. You can listen below while you wait.";
+    renderCompositionProgress();
+    return;
+  }
   status.classList.toggle("bad", issues.length > 0 && ids.length > 0);
   status.hidden = fresh && !flash;
   status.textContent = flash || (ids.length === 0 ? "Choose a site on the map to fill a chair."
@@ -518,60 +585,126 @@ async function compose(newTake = false) {
       return;
     }
   }
-  if (isStatic || runtimeFailed || generationRuntime?.python_available === false
+  if (isStatic || runtimeFailed || catalogUnavailable || generationRuntime?.python_available === false
       || (composer.aceOn && generationRuntime?.ace_available === false)) {
     showEngineNotice();
     return;
   }
   const log = $<HTMLPreElement>("#log");
-  const status = $<HTMLElement>("#status");
   busy = true;
+  compositionJob = null;
+  compositionError = "";
+  compositionProgress = { type: "progress", percent: null, stage: "Starting the composition engine…" };
+  showCompositionInputs(spec);
   renderDock();
-  status.classList.remove("bad");
-  status.textContent = "Starting the engine…";
   log.textContent = "";
+  $<HTMLElement>("#compose-progress").scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "center" });
   try {
     const response = await fetch(`/api/combine?model=${spec.ace ? 1 : 0}`, { method: "POST", body: JSON.stringify(spec) });
-    if (!response.ok || !response.body) throw new Error((await response.json().catch(() => ({}))).error ?? `Server answered ${response.status}`);
-    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-    let completed = false;
-    let buffer = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += value;
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines.filter(Boolean)) {
-        const message = JSON.parse(line) as CombineMessage;
-        if (message.type === "log") {
+    await followComposition(response);
+  } catch (error) {
+    compositionError = `Composition failed: ${(error as Error).message}`;
+  } finally {
+    busy = false;
+    renderDock();
+  }
+}
+
+function showCompositionInputs(spec: Spec) {
+  $<HTMLElement>("#compose-inputs").hidden = false;
+  const seats = composer?.ids() ?? [];
+  const parts = spec.arrangement === "layer" ? [...spec.parts].sort((a, b) => seats.indexOf(a.source) - seats.indexOf(b.source)) : spec.parts;
+  renderSelectedTracks($<HTMLElement>("#compose-input-tracks"), { ...spec, parts }, sourceById, (source, button) => listen(source, button));
+}
+
+function renderCompositionProgress() {
+  const bar = $<HTMLProgressElement>("#compose-bar");
+  const percent = compositionProgress?.percent;
+  if (percent == null) bar.removeAttribute("value");
+  else bar.value = percent;
+  $<HTMLElement>("#compose-stage").textContent = compositionProgress?.stage ?? "Starting the composition engine…";
+  $<HTMLElement>("#compose-percent").textContent = percent == null ? "" : `~${Math.floor(percent)}%`;
+  const elapsed = compositionJob ? Math.max(0, Math.floor((Date.now() - Date.parse(compositionJob.started_at_utc)) / 1000)) : 0;
+  const time = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+  $<HTMLElement>("#compose-elapsed").textContent = `${elapsed ? `${time} elapsed · ` : ""}You can listen to the selected recordings while you wait.`;
+}
+
+/** Retry lost streams using the existing job; only a terminal event changes the result. */
+async function followComposition(initial: Response, restore = false) {
+  let response = initial;
+  let restored = !restore;
+  const log = $<HTMLPreElement>("#log");
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if (!response.ok) {
+        const message = (await response.json().catch(() => ({}))).error ?? `Server answered ${response.status}`;
+        if (response.status === 404) {
+          rememberJob(null);
+          compositionJob = null;
+        }
+        throw new Error(message);
+      }
+      await readComposition(response, (message) => {
+        if (message.type === "job") {
+          compositionJob = message.job;
+          rememberJob(message.job.id);
+          if (!restored) {
+            restored = true;
+            composer?.loadSpec(message.job.spec);
+            showCompositionInputs(message.job.spec);
+          }
+          renderDock();
+        } else if (message.type === "progress") {
+          // Replayed progress also restores the current stage after a reconnect.
+          compositionProgress = message;
+          renderCompositionProgress();
+        } else if (message.type === "log") {
           log.textContent += message.text + "\n";
           log.scrollTop = log.scrollHeight;
-          status.textContent = message.text.startsWith("ACE-Step:") ? message.text.slice("ACE-Step:".length).trim() : "Composing your piece…";
-        }
-        if (message.type === "error") throw new Error(message.message);
-        if (message.type === "done") {
-          completed = true;
-          pieceKey = key;
-          rendered.set(key, message.manifest.id);
+        } else if (message.type === "error") {
+          rememberJob(null);
+          compositionError = `Composition failed: ${message.message}`;
+          log.textContent += compositionError + "\n";
+        } else if (message.type === "done") {
+          rememberJob(null);
+          pieceKey = specKey(compositionJob?.spec ?? message.manifest.spec, catalog);
+          rendered.set(pieceKey, message.manifest.id);
+          compositionError = "";
           busy = false;
+          $<HTMLElement>("#compose-inputs").hidden = true;
           showResult(message.manifest, { seat: false, autoplay: true });
           void loadSaved();
         }
-      }
+      });
+      return;
+    } catch (error) {
+      if (!compositionJob || attempt >= 2) throw new Error(compositionJob
+        ? "The progress connection was lost. Your piece may still be composing. Try again to reconnect."
+        : (error as Error).message);
+      compositionProgress = { type: "progress", percent: compositionProgress?.percent ?? null, stage: "Reconnecting to your composition…" };
+      renderCompositionProgress();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      log.textContent = ""; // The job stream replays recent diagnostics.
+      response = await fetch(`/api/combine/${compositionJob.id}`).catch(() => new Response(null, { status: 503 }));
     }
-    if (!completed) throw new Error("The connection ended before the piece was ready. Please try again");
-  } catch (error) {
-    busy = false;
-    renderDock();
-    status.classList.add("bad");
-    status.textContent = `Composing failed: ${(error as Error).message}. The engine log has details.`;
-    return;
-  } finally {
-    busy = false;
   }
-  renderDock();
 }
+
+async function resumeComposition() {
+  let id: string | null = null;
+  try { id = sessionStorage.getItem(JOB_STORAGE); } catch { return; }
+  if (!id || busy) return;
+  busy = true;
+  compositionError = "";
+  compositionProgress = { type: "progress", percent: null, stage: "Reconnecting to your composition…" };
+  $<HTMLPreElement>("#log").textContent = "";
+  renderDock();
+  try { await followComposition(await fetch(`/api/combine/${encodeURIComponent(id)}`), true); }
+  catch (error) { compositionError = (error as Error).message; }
+  finally { busy = false; renderDock(); }
+}
+
+if (!isStatic) setInterval(() => { if (busy) renderCompositionProgress(); }, 1000);
 
 /* ---------- result and playback ---------- */
 function showResult(manifest: Manifest | null, options: { seat: boolean; autoplay?: boolean; scroll?: boolean }) {
@@ -762,6 +895,7 @@ function savedItem(c: ComboSummary): string {
 }
 
 let summaries = new Map<string, ComboSummary>();
+let programmeUnavailable = false;
 
 /** A saved piece. The server already applies preset names; the published copy applies them from combos.json. */
 async function piece(id: string): Promise<Manifest> {
@@ -771,7 +905,20 @@ async function piece(id: string): Promise<Manifest> {
 }
 
 async function loadSaved() {
-  const saved = await json<ComboSummary[]>(combosUrl()).catch(() => [] as ComboSummary[]);
+  let saved: ComboSummary[];
+  try {
+    saved = await json<ComboSummary[]>(combosUrl(), { signal: AbortSignal.timeout(10_000) });
+    if (programmeUnavailable) $<HTMLElement>("#programme-status").textContent = "";
+    programmeUnavailable = false;
+  } catch {
+    programmeUnavailable = true;
+    $<HTMLElement>("#programme-status").textContent = "The listening programme could not load. Please retry the connection or reload the page.";
+    if (!summaries.size) {
+      $<HTMLElement>("#saved").textContent = "";
+      $<HTMLButtonElement>("#programme-listen").disabled = !result;
+    }
+    return;
+  }
   summaries = new Map(saved.map((c) => [c.id, c]));
   const programme = saved.filter((c) => !precomputedIds.has(c.id) || c.preset || c.id === result?.id);
   $<HTMLButtonElement>("#programme-listen").disabled = programme.length === 0 && !result;
@@ -792,7 +939,11 @@ $<HTMLElement>("#saved").addEventListener("click", async (event) => {
   if (button && await openPiece(button.dataset.combo!, { autoplay: false, scroll: false })) {
     $<HTMLButtonElement>('#zooms [data-zoom="0"]').click();
     $("#programme-status").textContent = `${result!.parts.length} players seated. Play below, or change the ensemble.`;
-    if (matchMedia("(max-width: 850px)").matches) { setProgrammeOpen(false); programmeToggle.focus(); }
+    if (matchMedia("(max-width: 850px)").matches) {
+      setProgrammeOpen(false);
+      $<HTMLButtonElement>("#play").focus({ preventScroll: true });
+      $("#hall-seats").scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
+    }
   }
 });
 
@@ -803,6 +954,9 @@ if (isStatic) {
 }
 dockReady = true;
 orchestraChanged();
+void refreshCatalog();
+void loadPrecomputed();
+setInterval(() => { if (document.visibilityState === "visible") void refreshCatalog(); }, 5 * 60_000);
 await loadSaved();
 if (isStatic && !location.hash) {
   const first = document.querySelector<HTMLButtonElement>("#saved [data-combo]");
@@ -816,3 +970,9 @@ async function openFromHash(scroll = true) {
 }
 window.addEventListener("hashchange", () => void openFromHash());
 await openFromHash(false);
+try {
+  const draft = sessionStorage.getItem("whales-catalog-draft");
+  sessionStorage.removeItem("whales-catalog-draft");
+  if (draft) composer?.loadSpec(JSON.parse(draft) as Spec);
+} catch { /* A failed browser cache must not stop playback. */ }
+if (!isStatic) void resumeComposition();

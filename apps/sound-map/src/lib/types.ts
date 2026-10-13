@@ -164,8 +164,24 @@ export interface ComboSummary {
   preset?: boolean; // named by the user; unnamed pieces are kept as recent work
 }
 
-/** Lines streamed by POST /api/combine as NDJSON. */
+export interface CompositionJob {
+  id: string;
+  spec: Spec;
+  started_at_utc: string;
+  state: "queued" | "running" | "done" | "error";
+  queue_position: number;
+}
+
+export interface CompositionProgress {
+  type: "progress";
+  percent: number | null;
+  stage: string;
+}
+
+/** Lines streamed when starting or reconnecting to a composition, as NDJSON. */
 export type CombineMessage =
+  | { type: "job"; job: CompositionJob }
+  | CompositionProgress
   | { type: "log"; text: string }
   | { type: "done"; manifest: Manifest }
   | { type: "error"; message: string };

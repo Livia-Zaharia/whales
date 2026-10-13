@@ -73,10 +73,17 @@ class AceRuntimeTests(unittest.TestCase):
         self.assertEqual(metadata["device"], "Test GPU")
         device_name.assert_called_once_with(0)
 
-    def test_repeated_progress_descriptions_do_not_flood_the_stream(self):
+    def test_progress_values_reach_the_ui_even_when_the_stage_is_unchanged(self):
         follow_ace.report_progress.last_description = None
+        follow_ace.report_progress.last_percent = None
         with contextlib.redirect_stdout(io.StringIO()) as log:
             follow_ace.report_progress(.5, desc="Generating music")
             follow_ace.report_progress(.6, desc="Generating music")
+            follow_ace.report_progress(.6, desc="Generating music")
             follow_ace.report_progress(.8, desc="Decoding audio")
-        self.assertEqual(log.getvalue().splitlines(), ["ACE-Step: Generating music", "ACE-Step: Decoding audio"])
+        lines = log.getvalue().splitlines()
+        self.assertEqual([line for line in lines if line.startswith("ACE-Step:")],
+                         ["ACE-Step: Generating music", "ACE-Step: Decoding audio"])
+        progress = [json.loads(line.removeprefix("COMPOSE_PROGRESS ")) for line in lines if line.startswith("COMPOSE_PROGRESS ")]
+        self.assertEqual([item["percent"] for item in progress], [57.5, 63.0, 74.0])
+        self.assertEqual(progress[-1]["stage"], "Decoding audio")

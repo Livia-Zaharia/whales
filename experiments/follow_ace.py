@@ -49,12 +49,14 @@ def main(jobs_path: str):
                                                offload_to_cpu=offload, offload_dit_to_cpu=offload,
                                                quantization=quantization)
     if not ready:
-        raise SystemExit(f"ACE-Step did not initialize: {status}")
+        raise SystemExit(f"ERROR: ACE-Step did not initialize: {status}")
     load_s = time.perf_counter() - started
     results_path = Path(spec["results"])
     previous = json.loads(results_path.read_text(encoding="utf-8")) if results_path.exists() else {"jobs": {}}
     llm = LLMHandler()  # never initialized: lego skips the LM, text2music runs DiT-only
     for job in spec["jobs"]:
+        report_progress.last_description = None
+        report_progress.last_percent = None
         instruction = handler.generate_instruction(job["task"], track_name=job["track"])
         params = GenerationParams(
             task_type=job["task"], instruction=instruction, src_audio=job["src_audio"], caption=job["caption"],
@@ -69,7 +71,7 @@ def main(jobs_path: str):
             result = generate_music(handler, llm, params, config, save_dir=scratch, progress=report_progress)
             elapsed = time.perf_counter() - began
             if not result.success or not result.audios:
-                raise SystemExit(f"{job['id']}: {result.error or result.status_message}")
+                raise SystemExit(f"ERROR: ACE-Step: {result.error or result.status_message}")
             output = Path(job["output"])
             output.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(result.audios[0]["path"], output)
@@ -85,13 +87,21 @@ def main(jobs_path: str):
         results_path.write_text(json.dumps(previous, indent=2) + "\n", encoding="utf-8")
 
 
-def report_progress(_value=None, desc=None, **_kwargs):
+def report_progress(value=None, desc=None, **_kwargs):
+    # Upstream progress includes estimated diffusion progress. Reserve the final
+    # portion for our playback files and timing checks; only the manifest finishes the job.
+    if isinstance(value, (float, int)) and 0 <= value <= 1:
+        percent = round(30 + 55 * value, 1)
+        if percent != report_progress.last_percent or desc != report_progress.last_description:
+            print("COMPOSE_PROGRESS " + json.dumps({"percent": percent, "stage": desc or "Generating music…"}), flush=True)
+            report_progress.last_percent = percent
     if desc and desc != report_progress.last_description:
         print(f"ACE-Step: {desc}", flush=True)
         report_progress.last_description = desc
 
 
 report_progress.last_description = None
+report_progress.last_percent = None
 
 
 if __name__ == "__main__":

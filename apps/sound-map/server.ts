@@ -5,11 +5,13 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import index from "./src/index.html";
-import { combineStream } from "./src/lib/combine-stream.ts";
+import { CompositionJobs, type TrackedComposition } from "./src/lib/combine-jobs.ts";
+import { compositionFailure, compositionProgress } from "./src/lib/combine-progress.ts";
+import { specKey } from "./src/lib/precomputed.ts";
 import { contentType, readableLog, safeJoin } from "./src/lib/paths.ts";
 import { SILVER_AUDIO_METHODS } from "./src/lib/silver-audio.ts";
 import { SILVER_AUDIO_RUNTIME } from "./src/lib/silver-performance.ts";
-import type { ComboSummary, GenerationRuntime, Manifest } from "./src/lib/types.ts";
+import type { Catalog, ComboSummary, GenerationRuntime, Manifest, Spec } from "./src/lib/types.ts";
 
 declare const WHALES_BUILD_ROOT: string; // replaced by the production build
 const ROOT = resolve(process.env.WHALES_ROOT ?? (typeof WHALES_BUILD_ROOT === "string" ? WHALES_BUILD_ROOT : join(import.meta.dir, "..", "..")));
@@ -36,7 +38,7 @@ const HOSTNAME = process.env.ORCHESTRA_HOST ?? process.env.HOST ?? "127.0.0.1";
 const PYTHON = ["uv", "run", "--group", "audio", "main.py", "follow"];
 const MAX_SPEC_BYTES = 64 * 1024;
 
-let running: Promise<unknown> | null = null; // one combination at a time: the GPU is shared
+const compositions = new CompositionJobs(); // one combination at a time: the GPU is shared
 let runtimeProbe: { expires: number; result: Promise<GenerationRuntime> } | null = null;
 
 async function generationRuntime(): Promise<Response> {
@@ -94,32 +96,44 @@ async function python(args: string[], onLine?: (line: string) => void): Promise<
         onLine?.(line);
       }
     }
-    if (buffer) tail.push(buffer);
+    buffer += decoder.decode();
+    if (buffer) {
+      tail.push(buffer);
+      if (tail.length > 40) tail.shift();
+      onLine?.(buffer);
+    }
   };
   await Promise.all([pump(child.stdout), pump(child.stderr)]);
   return { code: await child.exited, tail };
 }
 
-async function catalog(): Promise<Response> {
+async function catalogFile(file: ReturnType<typeof Bun.file>, request?: Request): Promise<Response> {
+  await file.exists(); // Load file metadata before constructing its cache validator.
+  const etag = `W/"${file.size}-${file.lastModified}"`;
+  const headers = { "content-type": "application/json", "cache-control": "no-cache", etag };
+  return request?.headers.get("if-none-match") === etag ? new Response(null, { status: 304, headers }) : new Response(file, { headers });
+}
+
+async function catalog(request?: Request): Promise<Response> {
   const file = Bun.file(join(OUTPUT, "catalog.json"));
   const demo = Bun.file(join(DEMO, "catalog.json"));
   const prepared = await Bun.file(join(ROOT, "data", "interim", "follow", "prepared.json")).exists();
   if (!(await file.exists()) && !prepared && (await demo.exists())) {
-    return new Response(demo, { headers: { "content-type": "application/json" } });
+    return catalogFile(demo, request);
   }
   if (!(await file.exists())) {
     const runtime = await (await generationRuntime()).json() as GenerationRuntime;
     if (!runtime.python_available) {
-      if (await demo.exists()) return new Response(demo, { headers: { "content-type": "application/json" } });
+      if (await demo.exists()) return catalogFile(demo, request);
       return Response.json({ error: "The Python engine is unavailable and no playback catalog is installed." }, { status: 503 });
     }
     const { code, tail } = await python(["catalog"]);
     if (code !== 0) {
-      if (await demo.exists()) return new Response(demo, { headers: { "content-type": "application/json" } });
+      if (await demo.exists()) return catalogFile(demo, request);
       return Response.json({ error: "Could not load the catalog. Install the prepared dataset with 'main.py follow dataset download'.", log: tail }, { status: 500 });
     }
   }
-  return new Response(Bun.file(join(OUTPUT, "catalog.json")), { headers: { "content-type": "application/json" } });
+  return catalogFile(Bun.file(join(OUTPUT, "catalog.json")), request);
 }
 
 async function combos(): Promise<Response> {
@@ -169,12 +183,9 @@ async function savePreset(request: Request, id: string): Promise<Response> {
 }
 
 async function combine(request: Request): Promise<Response> {
-  if (running) return Response.json({ error: "A combination is already running. Wait for it to finish." }, { status: 409 });
-  const runtime = await (await generationRuntime()).json() as GenerationRuntime;
-  if (!runtime.python_available) return Response.json({ error: "The Python composition engine is unavailable. Recordings and saved pieces still play." }, { status: 503 });
   const body = await request.text();
   if (body.length > MAX_SPEC_BYTES) return Response.json({ error: "The spec is too large." }, { status: 413 });
-  let spec: unknown;
+  let spec: Spec;
   try {
     spec = JSON.parse(body);
   } catch {
@@ -182,27 +193,50 @@ async function combine(request: Request): Promise<Response> {
   }
   const url = new URL(request.url);
   const model = url.searchParams.get("model") !== "0";
-  await mkdir(SPECS, { recursive: true });
-  const specPath = join(SPECS, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-  await Bun.write(specPath, JSON.stringify(spec, null, 2));
+  let key: string;
+  try {
+    // The same defaults and layer ordering used by saved-piece lookup in the UI.
+    spec = { ...spec, ace: model ? spec.ace : null };
+    const sourceCatalog = await (await catalog()).json() as Catalog;
+    key = sourceCatalog.config_sha256 + specKey(spec, sourceCatalog);
+  } catch {
+    return Response.json({ error: "The combination settings could not be read. Choose recordings and try again." }, { status: 400 });
+  }
+  const pending = compositions.pending(key);
+  if (pending) return compositionStream(pending);
+  const runtime = await (await generationRuntime()).json() as GenerationRuntime;
+  if (!runtime.python_available) return Response.json({ error: "The Python composition engine is unavailable. Recordings and saved pieces still play." }, { status: 503 });
 
-  if (running) return Response.json({ error: "A combination is already running. Wait for it to finish." }, { status: 409 });
-  const { stream, completion } = combineStream(async (send) => {
+  // Reserve synchronously after the runtime probe. Different jobs queue; matching jobs join.
+  const job = compositions.start(key, spec, async (send, id) => {
+    await mkdir(SPECS, { recursive: true });
+    const specPath = join(SPECS, `${id}.json`);
+    await Bun.write(specPath, JSON.stringify(spec, null, 2));
     const args = ["combine", specPath, ...(model ? [] : ["--no-model"])];
+    let failure: string | null = null;
     const { code, tail } = await python(args, (line) => {
-      if (readableLog(line) && !line.startsWith("ERROR: ")) send({ type: "log", text: line.trim() });
+      if (line.trim().startsWith("ERROR: ")) failure = line.trim().slice(7);
+      const progress = compositionProgress(line);
+      if (progress) send(progress);
+      else if (readableLog(line) && !line.trim().startsWith("ERROR: ")) send({ type: "log", text: line.trim() });
     });
-    const last = tail.filter((line) => line.trim()).at(-1) ?? "";
-    if (code === 0 && last.endsWith("manifest.json")) {
-      send({ type: "done", manifest: (await Bun.file(last.trim()).json()) as Manifest });
+    const manifestPath = tail.map((line) => line.trim()).filter((line) => line.endsWith("manifest.json")).at(-1);
+    if (code === 0 && manifestPath) {
+      send({ type: "done", manifest: (await Bun.file(manifestPath).json()) as Manifest });
     } else {
-      const reason = tail.find((line) => line.startsWith("ERROR: "))?.slice(7) ?? tail.filter((line) => /Error|Traceback/.test(line)).at(-1);
-      send({ type: "error", message: reason?.trim() || `Python exited with code ${code}.` });
+      send({ type: "error", message: failure || compositionFailure(tail, code) });
     }
   });
-  running = completion;
-  void completion.then(() => { running = null; });
-  return new Response(stream, { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" } });
+  return compositionStream(job);
+}
+
+function compositionStream(job: TrackedComposition): Response {
+  return new Response(job.stream(), { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" } });
+}
+
+function reconnectComposition(id: string): Response {
+  const job = compositions.get(id);
+  return job ? compositionStream(job) : Response.json({ error: "This composition can no longer be tracked. Please compose the piece again." }, { status: 404 });
 }
 
 async function files(request: Request): Promise<Response> {
@@ -320,7 +354,8 @@ const server = Bun.serve({
     "/api/combos": { GET: combos },
     "/api/combos/:id": { GET: (request) => combo(request.params.id) },
     "/api/combos/:id/preset": { POST: (request) => savePreset(request, request.params.id) },
-    "/api/combine": { POST: combine },
+    "/api/combine": { POST: combine, GET: () => Response.json({ job: compositions.active?.info ?? null }, { headers: { "cache-control": "no-store" } }) },
+    "/api/combine/:id": { GET: (request) => reconnectComposition(request.params.id) },
     "/files/*": { GET: files },
   },
   fetch: () => new Response("Not found", { status: 404 }),

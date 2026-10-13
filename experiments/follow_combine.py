@@ -33,6 +33,11 @@ TASKS = ("cover", "lego")
 RENDER_VERSION = 4
 
 
+def report_progress(percent: float, stage: str):
+    """Report completed pipeline stages without changing the rendered piece."""
+    print("COMPOSE_PROGRESS " + json.dumps({"percent": round(percent, 1), "stage": stage}), flush=True)
+
+
 def prepared_sources(layout: Layout):
     interim, _ = directories(layout)
     path = interim / "prepared.json"
@@ -229,12 +234,14 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
     """Write stems, listening files and manifest.json for one combination; returns the manifest path."""
     import numpy as np
 
+    report_progress(2, "Preparing the selected recordings…")
     _, output = directories(layout)
     prepared = prepared_sources(layout)
     combo = plan(spec, config, prepared)
     folder = output / "combos" / combo["id"]
     reused = saved_render(folder, output, bool(combo["ace"] and run_model)) if reuse else None
     if reused:
+        report_progress(99, "Opening the saved composition…")
         print(f"Reusing the saved render → combos/{combo['id']}/manifest.json")
         return reused
     folder.mkdir(parents=True, exist_ok=True)
@@ -243,6 +250,8 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
     mixes = {name: np.zeros(n) for name in ("animal", "guide", "response")}
     layers, parts = [], []
     for part in combo["parts"]:
+        report_progress(5 + 15 * part["index"] / len(combo["parts"]),
+                        f"Preparing recording {part['index'] + 1} of {len(combo['parts'])}…")
         item = prepared[part["source"]]
         species = config["species"][item["species"]]
         events = placed(item["events"], part["trim_s"], part["offset_s"])
@@ -262,12 +271,14 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
     peak = max(float(np.max(np.abs(x))) for x in [*mixes.values(), *(v for layer in layers for v in layer.values())])
     scale = min(1.0, .9 / peak) if peak > 0 else 1.0
     stems = {}
+    report_progress(20, "Combining the recordings and musical guides…")
     for name, mix in mixes.items():
         band = MUSIC_BAND if name != "animal" else (60.0, 20000.0)
         wav = write_wav(folder / f"{name}.wav", mix * scale, rate)
         audio, image = listening(wav, band, rate)
         stems[name] = {"audio": str(audio.relative_to(output)), "image": str(image.relative_to(output)), "band": list(band)}
     for part, layer in zip(parts, layers):
+        report_progress(25 + 5 * part["index"] / len(parts), "Saving the individual recording tracks…")
         part["files"] = {}
         for name, signal in layer.items():
             wav = write_wav(folder / f"part-{part['index']}-{name}.wav", signal * scale, rate)
@@ -275,14 +286,17 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
             part["files"][name] = str(audio.relative_to(output))
     ace_result = None
     if combo["ace"] and run_model:
+        report_progress(30, "Preparing the music model…")
         ace_wav = folder / "ace.wav"
         if not ace_wav.exists():
             job = ace_job(combo, config, folder)
             run_ace(layout, config, [job], folder / "ace-jobs.json", folder / "ace-results.json", ace_root, offload)
         ace_result = read_json(folder / "ace-results.json")["jobs"][f"combo-{combo['id']}"]
+        report_progress(86, "Preparing the generated music for playback…")
         audio, image = listening(ace_wav, MUSIC_BAND, rate)
         stems["ace"] = {"audio": str(audio.relative_to(output)), "image": str(image.relative_to(output)), "band": list(MUSIC_BAND)}
     m = config["metrics"]
+    report_progress(90, "Checking the composition against the measured phrases…")
     results = {}
     for name in ("response", "ace"):
         if name in stems:
@@ -294,4 +308,5 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
                 "spec": combo, "duration_s": combo["duration_s"], "scale": scale, "parts": parts, "stems": stems,
                 "scores": results, "ace": ace_result, "interpretation": config["combination"]["interpretation"]}
     write_json(folder / "manifest.json", manifest)
+    report_progress(99, "Your piece is ready. Opening playback…")
     return folder / "manifest.json"

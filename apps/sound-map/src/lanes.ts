@@ -2,7 +2,8 @@
 // onset-strength envelopes, a shared playhead, and per-part timing scores.
 
 import { fileUrl } from "./lib/api.ts";
-import type { Manifest, ManifestPart, OutputScores, PhraseEvent, Source, StemName, Timing } from "./lib/types.ts";
+import { place, totalDuration } from "./lib/arrange.ts";
+import type { Manifest, ManifestPart, OutputScores, PhraseEvent, Source, Spec, StemName, Timing } from "./lib/types.ts";
 import { SPECIES_COLOR } from "./map.ts";
 
 const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
@@ -57,7 +58,7 @@ export function renderLanes(container: HTMLElement, manifest: Manifest, onSeek: 
 }
 
 /** Actual source spectrograms, cropped to the selected trims and placed on the piece's timeline. */
-export function renderIndividualTracks(container: HTMLElement, manifest: Manifest, sources: ReadonlyMap<string, Source>, onSeek: (t: number) => void): (t: number | null) => void {
+export function renderIndividualTracks(container: HTMLElement, manifest: Pick<Manifest, "parts" | "duration_s">, sources: ReadonlyMap<string, Source>, onSeek: (t: number) => void): (t: number | null) => void {
   container.innerHTML = manifest.parts.map((part, i) => {
     const source = sources.get(part.source);
     const length = part.trim_s[1] - part.trim_s[0];
@@ -68,6 +69,39 @@ export function renderIndividualTracks(container: HTMLElement, manifest: Manifes
       <div class="spec" data-lane="part-${i}" role="slider" tabindex="0" aria-label="Seek in recording ${i + 1}: ${esc(part.title)}" aria-valuemin="0" aria-valuemax="${manifest.duration_s}" aria-valuenow="0"><div class="recording-clip" style="left:${left}%;width:${width}%">${image}</div><svg viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true">${ticks([part], manifest.duration_s)}</svg><div class="playhead"></div></div></div>`;
   }).join("") + `<div class="track-ruler" aria-label="Shared time in seconds">${[0, .25, .5, .75, 1].map(fraction => `<span>${(fraction * manifest.duration_s).toFixed(1)} s</span>`).join("")}</div>`;
   return bindTimeline(container, manifest.duration_s, onSeek);
+}
+
+/** Inputs are already known: show their actual spectrograms before generation starts. */
+export function renderSelectedTracks(container: HTMLElement, spec: Spec, sources: Map<string, Source>, onListen: (source: Source, button: HTMLButtonElement) => void) {
+  const placed = place(spec.parts, spec.arrangement, spec.gap_s, sources);
+  const parts: ManifestPart[] = placed.flatMap((part) => {
+    const source = sources.get(part.source);
+    if (!source) return [];
+    return [{ ...part, offset_s: part.start_s, species: source.species, title: source.title, location: source.location,
+      instrument: source.instrument, shift_octaves: part.shift_octaves ?? source.register_shift_octaves,
+      events: [], onsets_s: source.onsets_s.filter((t) => t >= part.trim_s[0] && t < part.trim_s[1])
+        .map((t) => t - part.trim_s[0] + part.start_s), files: { animal: source.files.animal.audio, guide: source.files.guide.audio } }];
+  });
+  renderIndividualTracks(container, { parts, duration_s: totalDuration(placed) }, sources, () => {});
+  container.querySelectorAll<HTMLElement>(".individual-lane").forEach((lane, index) => {
+    const part = parts[index]!;
+    const source = sources.get(part.source)!;
+    const button = document.createElement("button");
+    button.className = "btn";
+    button.type = "button";
+    button.dataset.listen = source.id;
+    button.dataset.label = "Listen";
+    button.textContent = "Listen";
+    button.setAttribute("aria-label", `Listen to selected recording ${index + 1}: ${source.title}`);
+    button.addEventListener("click", () => onListen(source, button));
+    lane.firstElementChild!.append(button);
+    // These images preview the arrangement; playback uses the original recording button.
+    const image = lane.querySelector<HTMLElement>(".spec")!;
+    image.removeAttribute("role");
+    image.removeAttribute("tabindex");
+    image.removeAttribute("aria-label");
+    for (const name of ["aria-valuemin", "aria-valuemax", "aria-valuenow"]) image.removeAttribute(name);
+  });
 }
 
 function bindTimeline(container: HTMLElement, duration: number, onSeek: (t: number) => void): (t: number | null) => void {

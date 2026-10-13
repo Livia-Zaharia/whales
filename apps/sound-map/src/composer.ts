@@ -109,7 +109,11 @@ export class Composer {
 
   /** Seat a saved piece's players with its settings, so updating starts from it. */
   load(manifest: Manifest) {
-    const spec = manifest.spec;
+    this.loadSpec({ ...manifest.spec, ace: manifest.ace ? manifest.spec.ace : null });
+  }
+
+  /** Restore the inputs of a queued or running composition after a reload. */
+  loadSpec(spec: Spec) {
     this.parts = spec.parts
       .filter((p) => this.sources.has(p.source))
       .map((p) => ({ source: p.source, offset_s: p.offset_s, trim_s: [p.trim_s[0], p.trim_s[1]], gain_db: p.gain_db, shift_octaves: p.shift_octaves }));
@@ -117,15 +121,18 @@ export class Composer {
     this.gap_s = spec.gap_s;
     document.querySelector<HTMLInputElement>(`input[name="arrangement"][value="${spec.arrangement}"]`)!.checked = true;
     $<HTMLInputElement>("#gap").value = String(spec.gap_s);
-    const ace = manifest.ace;
+    const ace = spec.ace;
     $<HTMLInputElement>("#ace-on").checked = Boolean(ace);
     if (ace) {
       document.querySelector<HTMLInputElement>(`input[name="ace-task"][value="${ace.task}"]`)!.checked = true;
       $<HTMLInputElement>("#strength").value = String(ace.audio_cover_strength);
       $<HTMLOutputElement>("#strength-out").value = String(ace.audio_cover_strength);
-      $<HTMLTextAreaElement>("#caption").value = ace.caption;
+      $<HTMLTextAreaElement>("#caption").value = ace.caption ?? "";
       this.captionEdited = true;
       this.seed = ace.seed === this.catalog.seed ? undefined : ace.seed;
+    } else {
+      this.seed = undefined;
+      this.captionEdited = false;
     }
     this.render();
   }

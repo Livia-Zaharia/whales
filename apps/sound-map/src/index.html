@@ -35,7 +35,9 @@
     </header>
 
     <p class="load-error" id="load-error" role="alert" hidden></p>
-    <p class="engine-notice" id="engine-notice" role="status" aria-live="polite" hidden></p>
+    <div class="engine-notice" id="engine-notice" role="status" aria-live="polite" hidden><p id="engine-message"></p><button class="btn" id="connection-retry" type="button" hidden>Retry connection</button><button class="btn" id="catalog-update" type="button" hidden>Update recordings</button></div>
+    <p class="engine-notice" id="file-preview-notice" role="alert" hidden>This HTML file needs the app server to load its scripts and recordings. <a href="http://127.0.0.1:3070/">Open the running orchestra</a>. If it is not running, start it with <code>uv run start</code>.</p>
+    <script>if (location.protocol === "file:") document.getElementById("file-preview-notice").hidden = false;</script>
 
     <main id="concert-panel" class="view-panel" role="tabpanel" aria-labelledby="concert-tab" tabindex="0">
       <section class="hero" aria-labelledby="hero-title">
@@ -74,7 +76,9 @@
         <div class="hall-seating"><ol id="hall-seats" aria-label="Orchestra chairs"></ol></div>
         <div class="dock-actions"><p class="status" id="status" role="status"></p><button class="primary" id="combine" type="button">Compose piece</button></div>
         <p class="compose-runtime" id="compose-runtime" hidden>This server has no CUDA GPU. Composing runs on the CPU and may take a while. Finished pieces are ready to play immediately.</p>
-        <div class="compose-progress" id="compose-progress" hidden><progress aria-label="Composition in progress"></progress><span class="small">Preparing your piece. You can keep listening while it is being made.</span></div>
+        <div class="compose-progress" id="compose-progress" hidden><div class="compose-progress-caption"><span id="compose-stage" role="status">Starting the composition engine…</span><span id="compose-percent"></span></div><progress id="compose-bar" max="100" aria-label="Estimated composition progress"></progress><span class="small" id="compose-elapsed">You can listen to the selected recordings while your piece is being made.</span></div>
+        <p class="compose-error" id="compose-error" role="alert" hidden></p>
+        <section class="compose-inputs" id="compose-inputs" aria-labelledby="compose-inputs-title" hidden><h3 id="compose-inputs-title">Selected recordings</h3><div id="compose-input-tracks"></div></section>
       </section>
       <section class="result" id="result" hidden aria-labelledby="result-title">
         <div class="result-head"><div><span class="eyebrow" id="result-eyebrow"></span><h2 id="result-title"></h2><p class="small">Listen to the recorded voices and the music they helped shape.</p></div></div>
