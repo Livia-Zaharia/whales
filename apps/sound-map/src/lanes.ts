@@ -50,7 +50,8 @@ export function renderLanes(container: HTMLElement, manifest: Manifest, onSeek: 
     const stem = manifest.stems[lane.key]!;
     const overlay = ticks(parts, manifest.duration_s) + (lane.key === "guide" ? contours(parts, manifest.duration_s, stem.band) : "");
     const scores = lane.key === "response" || lane.key === "ace" ? manifest.scores[lane.key] : undefined;
-    return `<div class="lane"><div><span class="material-label">${esc(lane.material)}</span><h3>${esc(lane.title)}</h3><div class="small">${esc(lane.caption(manifest))}</div></div>
+    const material = lane.key === "ace" ? `Generated · ${manifest.generation?.label ?? "ACE-Step 1.5"}` : lane.material;
+    return `<div class="lane"><div><span class="material-label">${esc(material)}</span><h3>${esc(lane.title)}</h3><div class="small">${esc(lane.caption(manifest))}</div></div>
       <div><div class="spec" data-lane="${lane.key}" role="slider" tabindex="0" aria-label="Seek in ${esc(lane.title)}" aria-valuemin="0" aria-valuemax="${manifest.duration_s}" aria-valuenow="0"><img src="${esc(fileUrl(stem.image))}" alt="Spectrogram of ${esc(lane.title)}" loading="lazy">
         <svg viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true">${overlay}</svg><div class="playhead"></div></div>${envelope(scores, manifest.duration_s)}</div></div>`;
   }).join("");

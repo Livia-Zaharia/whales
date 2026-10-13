@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from experiments.data import Layout, read_json, write_json
 from experiments.follow import app, load_config
-from experiments.follow_precompute import combination_specs, duo_specs, precompute_trios, run_local_base
+from experiments.follow_precompute import combination_specs, duo_specs, precompute_combinations, precompute_trios, run_local_base
 from experiments.follow_models import generation_paths, model_registry, music_model
 from typer.testing import CliRunner
 
@@ -272,6 +272,43 @@ class TrioBatchTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "No ACE-Step environment"):
                 precompute_trios(self.layout, self.config)
         render.assert_not_called()
+
+    def test_stable_duos_and_trios_share_one_model_load_and_preserve_the_base_index(self):
+        python = self.layout.interim / "tools/Stable-Audio-3/.venv/bin/python"
+        python.parent.mkdir(parents=True)
+        python.touch()
+        legacy_index = self.layout.output / "follow/duos.json"
+        write_json(legacy_index, {"existing_base_duos": True})
+
+        def stable(layout, model, jobs, jobs_path, results_path, *_):
+            results = {"model": model["checkpoint"], "jobs": {}}
+            for job in jobs:
+                shutil.copyfile(job["src_audio"], job["output"])
+                results["jobs"][job["id"]] = job | {"model": model["checkpoint"], "seconds": 0,
+                    "parameters": {"init_noise_level": model["init_noise_level"]}}
+            write_json(results_path, results)
+            return results
+
+        with patch("experiments.follow_precompute.run_local_stable", side_effect=stable) as model, \
+                patch("experiments.follow_combine.run_stable", side_effect=AssertionError("No per-piece model load")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            paths = precompute_combinations(self.layout, self.config, [2, 3], workers=1, local=True,
+                                           model_variant="stable-audio-3-small")
+            model.assert_called_once()
+            self.assertEqual(len(model.call_args.args[2]), 10)
+            self.assertEqual([len(read_json(path)["pieces"]) for path in paths], [6, 4])
+            self.assertTrue(all("stable-audio-3-small" in path.name for path in paths))
+            self.assertEqual(read_json(legacy_index), {"existing_base_duos": True})
+            for path in paths:
+                for piece in read_json(path)["pieces"]:
+                    manifest = read_json(self.layout.output / "follow/combos" / piece["id"] / "manifest-stable-audio-3-small.json")
+                    self.assertIsNone(manifest["ace"])
+                    self.assertEqual(manifest["generation"]["model_id"], "stable-audio-3-small")
+                    self.assertIn("playback_gain", manifest["parts"][0])
+                    self.assertNotIn("/combos/", manifest["parts"][0]["files"]["animal"])
+            precompute_combinations(self.layout, self.config, [2, 3], workers=1, local=True,
+                                   model_variant="stable-audio-3-small")
+            model.assert_called_once()
 
 
 if __name__ == "__main__":

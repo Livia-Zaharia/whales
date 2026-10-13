@@ -165,6 +165,35 @@ class CombineTests(unittest.TestCase):
         self.assertTrue(all(part["z"] >= 3 for part in response["parts"]), response["parts"])
         self.assertTrue((self.layout.output / "follow" / sp["files"]["guide"]).exists())
 
+    def test_shared_playback_preserves_recordings_and_the_previous_mix_levels(self):
+        import numpy as np
+        import soundfile as sf
+
+        from experiments.data import read_json
+        from experiments.follow_combine import combine, saved_render
+
+        root = self.layout.output / "follow"
+        originals = {sid: (root / f"{sid}/animal.wav").read_bytes() for sid in ("hb", "sp")}
+        path = combine(self.layout, self.config, {"parts": [{"source": "hb"}, {"source": "sp"}]}, run_model=False)
+        manifest = read_json(path)
+        for part in manifest["parts"]:
+            self.assertEqual(part["files"]["animal"], f"{part['source']}/animal.mp3")
+            self.assertEqual(part["playback_gain"]["animal"], manifest["scale"])
+            self.assertEqual((root / f"{part['source']}/animal.wav").read_bytes(), originals[part["source"]])
+            self.assertFalse((path.parent / f"part-{part['index']}-animal.wav").exists())
+        for name in ("animal", "guide", "response"):
+            mixed, rate = sf.read(path.parent / f"{name}.wav")
+            reconstructed = np.zeros_like(mixed)
+            for component in manifest["stems"][name]["components"]:
+                samples, native = sf.read((root / component["audio"]).with_suffix(".wav"))
+                self.assertEqual(native, rate)
+                reconstructed[:len(samples)] += samples * component["gain"]
+            # Separate PCM16 rounding is the only difference before MP3 encoding.
+            self.assertLess(float(np.max(np.abs(mixed - reconstructed))), 1e-4)
+        missing = root / manifest["stems"]["response"]["components"][0]["audio"]
+        missing.unlink()
+        self.assertIsNone(saved_render(path.parent, root, needs_ace=False))
+
     def test_repeated_combination_reuses_the_saved_render(self):
         from experiments.data import read_json
         from experiments.follow_combine import combine

@@ -121,8 +121,8 @@ immediately on either kind of server. Compose shows
 an activity bar and the engine's current stage, with a CPU notice only when the
 server detects no CUDA.
 
-The model selector recommends **ACE-Step Base · Slow** for a full composition
-(50 steps and guidance controls) and **Stable Audio 3 Small Music · Fast** for a
+The model selector recommends **ACE-Step Base** for a full composition
+(50 steps and guidance controls) and **Stable Audio 3 Small Music** for a
 smaller eight-step model. **ACE-Step Turbo** is also available as a fast preview.
 Base is selected by default. The models receive the measured audio guide, duration
 and seed. ACE-Step Base uses the earlier ambient style caption; Turbo and Stable
@@ -133,6 +133,26 @@ Custom captions remain editable and override those defaults. An explicit shared
 caption keeps the same piece id across models; different resolved captions create
 separate pieces. Other automatic-prompt versions remain playable through **Play
 previous version**. Existing duos again match the default ACE-Step prompt.
+
+Model names stay short in the selector. The line below says whether the selected
+ensemble is saved and ready to play or needs generation, with its speed shown
+when computation is needed.
+
+Precompute all layered duos and trios in one resumable local CUDA batch:
+
+```bash
+uv run --env-file .env --group audio main.py follow precompute --model stable-audio-3-small --size 2 --size 3
+uv run --env-file .env --group audio main.py follow precompute-trios --model base
+```
+
+Use `--dry-run` to count pending pieces, `--source ID` repeatedly for a subset,
+and `--workers 4` for CPU preparation. Each batch loads the selected model once,
+checkpoints every generated piece and resumes without repeating finished music.
+Each model has its own ensemble indices and playback files; the legacy Base
+indices and audio remain playable. New default layered ensembles reuse the
+prepared recording MP3s and shared guides and responses, with playback gains
+applied by the player. This preserves recording levels without storing a separate
+copy of every recording for every ensemble. The recordings are not denoised.
 
 App settings live in `resources/orchestra-app.json`. Its `music` section configures
 the enabled model list, default and primary model, recommendations, characteristics

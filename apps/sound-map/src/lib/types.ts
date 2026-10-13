@@ -127,6 +127,8 @@ export interface Spec {
 export interface PrecomputedIndex {
   config_sha256: string;
   render_version: number;
+  model_id?: ModelVariant;
+  model_config_sha256?: string;
   pieces: { id: string; spec: Spec }[];
 }
 
@@ -160,6 +162,14 @@ export interface ManifestPart {
   events: PhraseEvent[];
   onsets_s: number[];
   files: { animal: string; guide: string };
+  playback_gain?: { animal: number; guide: number };
+}
+
+export interface PlaybackStem {
+  audio?: string;
+  image: string;
+  band: [number, number];
+  components?: { audio: string; gain: number }[];
 }
 
 export type StemName = "animal" | "guide" | "response" | "ace";
@@ -173,7 +183,7 @@ export interface Manifest {
   render_version?: number;
   spec: Spec & { id: string; duration_s: number; parts: ManifestPart[] };
   parts: ManifestPart[];
-  stems: Partial<Record<StemName, Listening>>;
+  stems: Partial<Record<StemName, PlaybackStem>>;
   scores: Partial<Record<"response" | "ace", OutputScores>>;
   ace: { caption: string; seed: number; task: string; seconds: number; audio_cover_strength: number; model?: string; variant?: ModelVariant; inference_steps?: number; guidance_scale?: number } | null;
   generation?: { model_id: string; engine: string; label: string; model_config_sha256: string; result: Record<string, unknown> } | null;

@@ -14,6 +14,7 @@ measurement, generation and scoring.
 """
 
 import hashlib
+import fcntl
 import json
 import math
 from pathlib import Path
@@ -33,7 +34,7 @@ ARRANGEMENTS = ("layer", "sequence")
 TASKS = ("cover", "lego")
 # Bump when rendering, response or scoring code changes: saved renders with another version are rebuilt
 # on their next request. Ids hash the spec and config, not the code. Manifests without the field are version 1.
-RENDER_VERSION = 9
+RENDER_VERSION = 10
 
 
 def report_progress(percent: float, stage: str):
@@ -228,7 +229,8 @@ def saved_render(folder: Path, output: Path, needs_ace: bool, model_variant: str
             fingerprint = (manifest.get("generation") or {}).get("model_config_sha256")
             if fingerprint and fingerprint != model_fingerprint(music_model(saved, registry)):
                 continue
-        files = [stem[key] for stem in manifest["stems"].values() for key in ("audio", "image")]
+        files = [stem[key] for stem in manifest["stems"].values() for key in ("audio", "image") if stem.get(key)]
+        files += [component["audio"] for stem in manifest["stems"].values() for component in stem.get("components", [])]
         files += [f for part in manifest["parts"] for f in part["files"].values()]
         if all((output / f).exists() for f in files):
             return path
@@ -242,6 +244,33 @@ def ace_job(combo: dict, config: dict, folder: Path):
             "caption": a["caption"], "duration": combo["duration_s"], "seed": a["seed"], "audio_cover_strength": a["audio_cover_strength"],
             "inference_steps": config["ace_step"]["inference_steps"], "guidance_scale": config["ace_step"]["guidance_scale"],
             "output": str((folder / "ace.wav").resolve())}
+
+
+def shared_part_audio(output, config, item, duration, signals):
+    """Keep original recordings and cache each unscaled guide/response once per source."""
+    import numpy as np
+
+    folder = output / "shared" / f"v{RENDER_VERSION}-{config['config_sha256'][:12]}" / item["id"] / str(round(duration * 1000))
+    folder.mkdir(parents=True, exist_ok=True)
+    files, normalization = {}, {"animal": 1.0}
+    with (folder / ".lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        original = output / item["stems"]["animal"]
+        (audio,) = listening(original, MUSIC_BAND, config["sample_rate"], image=False)
+        files["animal"] = str(audio.relative_to(output))
+        for name in ("guide", "response"):
+            peak = float(np.max(np.abs(signals[name])))
+            normalization[name] = min(1.0, .9 / peak) if peak else 1.0
+            wav = folder / f"{name}.wav"
+            audio = wav.with_suffix(".mp3")
+            if not audio.exists():
+                pending = folder / f".pending-{name}.wav"
+                write_wav(pending, signals[name] * normalization[name], config["sample_rate"])
+                (encoded,) = listening(pending, MUSIC_BAND, config["sample_rate"], image=False)
+                pending.replace(wav)
+                encoded.replace(audio)
+            files[name] = str(audio.relative_to(output))
+    return files, normalization
 
 
 def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = None, run_model: bool = True, offload: bool = False,
@@ -287,10 +316,10 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
         response = respond(events, combo["duration_s"], rate, part["shift_octaves"], config["response"])
         for name, layer in (("animal", animal), ("guide", guide), ("response", response)):
             mixes[name] += gain * layer
-        layers.append({"animal": gain * animal, "guide": gain * guide})
+        layers.append({"animal": gain * animal, "guide": gain * guide, "response": gain * response})
         parts.append(part | {"title": item["title"], "location": locations[part["source"]], "instrument": species["instrument"]["name"],
                              "events": event_data(events), "onsets_s": [round(t, 4) for t in onsets(events)]})
-    peak = max(float(np.max(np.abs(x))) for x in [*mixes.values(), *(v for layer in layers for v in layer.values())])
+    peak = max(float(np.max(np.abs(x))) for x in [*mixes.values(), *(layer[name] for layer in layers for name in ("animal", "guide"))])
     scale = min(1.0, .9 / peak) if peak > 0 else 1.0
     stems = {}
     report_progress(20, "Combining the recordings and musical guides…")
@@ -299,13 +328,29 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
         wav = write_wav(folder / f"{name}.wav", mix * scale, rate)
         audio, image = listening(wav, band, rate)
         stems[name] = {"audio": str(audio.relative_to(output)), "image": str(image.relative_to(output)), "band": list(band)}
+    shared = combo["arrangement"] == "layer" and all(
+        part["offset_s"] == 0 and part["gain_db"] == 0
+        and part["trim_s"] == [0, round(prepared[part["source"]]["duration_s"], 3)]
+        and part["shift_octaves"] == prepared[part["source"]]["register_shift_octaves"] for part in parts)
+    components = {name: [] for name in mixes}
     for part, layer in zip(parts, layers):
         report_progress(25 + 5 * part["index"] / len(parts), "Saving the individual recording tracks…")
         part["files"] = {}
-        for name, signal in layer.items():
+        if shared:
+            files, normalization = shared_part_audio(output, config, prepared[part["source"]], combo["duration_s"], layer)
+            part["files"] = {name: files[name] for name in ("animal", "guide")}
+            part["playback_gain"] = {name: scale / normalization[name] for name in ("animal", "guide")}
+            for name in components:
+                components[name].append({"audio": files[name], "gain": scale / normalization[name]})
+            continue
+        for name in ("animal", "guide"):
+            signal = layer[name]
             wav = write_wav(folder / f"part-{part['index']}-{name}.wav", signal * scale, rate)
             (audio,) = listening(wav, MUSIC_BAND, rate, image=False)
             part["files"][name] = str(audio.relative_to(output))
+    if shared:
+        for name in components:
+            stems[name]["components"] = components[name]
     ace_result = None
     ace_name = "ace"
     if combo["ace"] and run_model:

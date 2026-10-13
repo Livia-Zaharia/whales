@@ -66,9 +66,12 @@ export class Player {
       if (this.offset < buffer.duration) source.start(this.startedAt, this.offset);
       this.nodes.set(track.key, { source, gain });
     });
-    // Every stem of a combination has the same length, so the first one marks the end.
-    const first = [...this.nodes.values()].at(0)?.source;
-    if (first) first.onended = () => { if (token === this.token) this.finish(); };
+    // Shared original recordings can end before the generated music and its guide tail.
+    let last: AudioBufferSourceNode | null = null;
+    for (const { source } of this.nodes.values()) {
+      if (!last || source.buffer!.duration > last.buffer!.duration) last = source;
+    }
+    if (last) last.onended = () => { if (token === this.token) this.finish(); };
   }
 
   setGain(key: string, value: number) {

@@ -2,6 +2,10 @@ import { buildSpec } from "./arrange.ts";
 import { automaticCaption, defaultCaption, ensembleCaption, legacyCaption } from "./caption.ts";
 import type { Catalog, ModelRegistry, PrecomputedIndex, Spec } from "./types.ts";
 
+export function precomputedFiles(models: readonly string[]): string[] {
+  return [...new Set(["duos.json", "trios.json", ...models.flatMap(model => [`duos-${model}.json`, `trios-${model}.json`])])];
+}
+
 /** Same defaults as the Python plan: automatic registers and the catalogue seed are resolved. */
 export function specKey(spec: Spec, catalog: Catalog, model?: string, registry?: ModelRegistry): string {
   const sources = new Map(catalog.sources.map((s) => [s.id, s]));

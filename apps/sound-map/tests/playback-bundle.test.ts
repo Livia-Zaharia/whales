@@ -24,10 +24,11 @@ describe("playback bundle", () => {
       expect(manifests.size).toBe(4);
       const media = new Set([...manifests.values()].flatMap(playbackMedia));
       expect(media.has(`${folder}/ace.mp3`)).toBe(true);
-      expect(media.has(base.stems.ace!.audio)).toBe(true);
-      expect(media.has(stable.stems.ace!.audio)).toBe(true);
+      expect(media.has(base.stems.ace!.audio!)).toBe(true);
+      expect(media.has(stable.stems.ace!.audio!)).toBe(true);
       expect(media.has(`${folder}/part-1.mp3`)).toBe(true);
-      expect(PRECOMPUTED_FILES).toEqual(["duos.json", "trios.json"]);
+      expect(PRECOMPUTED_FILES).toContain("duos.json");
+      expect(PRECOMPUTED_FILES).toContain("trios-stable-audio-3-small.json");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

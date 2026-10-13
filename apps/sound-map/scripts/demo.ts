@@ -8,7 +8,7 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { SPECIES_ICON_FILES } from "../src/lib/species.ts";
 import type { Catalog, Manifest } from "../src/lib/types.ts";
-import { playbackManifests, playbackMedia, PRECOMPUTED_FILES } from "./playback.ts";
+import { compactPlayback, playbackManifests, playbackMedia, PRECOMPUTED_FILES } from "./playback.ts";
 
 const ROOT = resolve(process.env.WHALES_ROOT ?? join(import.meta.dir, "..", "..", ".."));
 const OUTPUT = join(ROOT, "data", "output", "follow");
@@ -51,7 +51,7 @@ for (const manifest of manifests) {
     for (const [path, variant] of await playbackManifests(DEMO, manifest.id)) bundledManifests.set(path, variant);
   }
   if (selectedIds.has(manifest.id)) {
-    for (const [path, variant] of await playbackManifests(OUTPUT, manifest.id)) bundledManifests.set(path, variant);
+    for (const [path, variant] of await playbackManifests(OUTPUT, manifest.id)) bundledManifests.set(path, compactPlayback(variant));
   }
 }
 

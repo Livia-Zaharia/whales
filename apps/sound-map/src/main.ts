@@ -7,7 +7,8 @@ import { SPECIES } from "./lib/species.ts";
 import { renderIndividualTracks, renderLanes, renderScores, renderSelectedTracks, partColor } from "./lanes.ts";
 import { catalogUrl, comboUrl, combosUrl, fileUrl, isStatic } from "./lib/api.ts";
 import { activePulses, soundingParts } from "./lib/pulses.ts";
-import { earlierPieces, precomputedPieces, specKey } from "./lib/precomputed.ts";
+import { earlierPieces, precomputedFiles, precomputedPieces, specKey } from "./lib/precomputed.ts";
+import { SavedVersions } from "./lib/saved-versions.ts";
 import { readComposition } from "./lib/combine-reader.ts";
 import { bundledModels, isModelRegistry, modelLabel, modelMatches, modelSatisfies, renderedModel } from "./lib/model-variant.ts";
 import { initialCatalog, isCatalog, sameCatalog, saveCatalog } from "./lib/catalog-snapshot.ts";
@@ -16,6 +17,7 @@ import { CATEGORY, THREATENED, TREND_ARROW, TREND_WORD, statusLine, statusOf, vo
 import type { Catalog, CompositionJob, CompositionProgress, ComboSummary, GenerationRuntime, Manifest, ModelVariant, PrecomputedIndex, Source, Spec, Species, StemName } from "./lib/types.ts";
 import { AtlasMap, SPECIES_COLOR, sitesOf, type Countries, type MapPart, type Site } from "./map.ts";
 import { Player, type Track } from "./player.ts";
+import { playbackGains, playbackTracks } from "./lib/playback-tracks.ts";
 import { setSilverViewerActive } from "./silver-viewer.ts";
 
 const $ = <T extends Element>(selector: string) => document.querySelector(selector) as T;
@@ -202,17 +204,20 @@ const siteOf = new Map(sites.flatMap((site) => site.sources.map((s) => [s.id, si
 const player = new Player();
 const preview = new Audio();
 let pieceKey: string | null = null; // the orchestra spec the piece on screen was made from
-const rendered = new Map<string, string>(); // precomputed ensembles, plus pieces composed or opened this session
-const renderedModels = new Map<string, ModelVariant | null>();
+const rendered = new SavedVersions();
 const previousVersions = new Map<string, string>();
 let modelRegistry = bundledModels;
 let selectedModel: ModelVariant = modelRegistry.default_model;
 try { const saved = sessionStorage.getItem("whales-compose-model"); if (modelRegistry.models.some(m => m.id === saved)) selectedModel = saved!; } catch { /* Use the configured default. */ }
 let modelChoiceRevision = 0;
+function savedPiece(key: string) {
+  const model = composer?.aceOn ? selectedModel : null;
+  return rendered.find(key, model, modelRegistry.models.find(choice => choice.id === model)?.fingerprint);
+}
 function renderModelChoices() {
   const select = $<HTMLSelectElement>("#compose-model");
   const options = (recommended: boolean) => modelRegistry.models.filter(m => Boolean(m.recommended) === recommended).map(m =>
-    `<option value="${esc(m.id)}">${esc(m.label)}${m.characteristics.length ? ` · ${esc(m.characteristics.join(", "))}` : ""}${m.available === false ? " · unavailable" : ""}</option>`).join("");
+    `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("");
   select.innerHTML = (options(true) ? `<optgroup label="Recommended">${options(true)}</optgroup>` : "")
     + (options(false) ? `<optgroup label="Other models">${options(false)}</optgroup>` : "");
   select.value = selectedModel;
@@ -229,10 +234,11 @@ async function refreshModels() {
 renderModelChoices();
 const precomputedIds = new Set<string>();
 async function loadPrecomputed() {
-  const indices = await Promise.all(["duos.json", "trios.json"].map(path =>
+  const indices = await Promise.all(precomputedFiles(modelRegistry.models.map(model => model.id)).map(path =>
     json<PrecomputedIndex>(fileUrl(path), { signal: AbortSignal.timeout(10_000) }).catch(() => null)));
   for (const index of indices) {
-    for (const [key, id] of precomputedPieces(index, catalog)) { rendered.set(key, id); renderedModels.set(key, "base"); precomputedIds.add(id); }
+    const model = index?.model_id ?? "base";
+    for (const [key, id] of precomputedPieces(index, catalog)) { rendered.remember(key, model, id, index?.model_config_sha256); precomputedIds.add(id); }
     for (const [key, id] of earlierPieces(index, catalog)) previousVersions.set(key, id);
   }
   if (dockReady) renderDock();
@@ -472,14 +478,17 @@ function renderDock() {
   const ready = !busy && ids.length > 0 && issues.length === 0;
   const matchesModel = (manifest: Manifest) => !composer!.aceOn || modelMatches(manifest, modelRegistry.models.find(m=>m.id===selectedModel)!);
   const fresh = result !== null && key === pieceKey && matchesModel(result);
-  const savedModel = renderedModels.get(key);
-  const available = rendered.has(key) && (!composer.aceOn || Boolean(savedModel) && modelSatisfies(savedModel!, selectedModel))
+  const available = Boolean(savedPiece(key))
     && (!result || key !== pieceKey || matchesModel(result));
   const upgrade = result !== null && key === pieceKey && !fresh && Boolean(result.stems.ace);
   $<HTMLSelectElement>("#compose-model").disabled = busy || !composer.aceOn;
   $<HTMLSelectElement>("#compose-model").value = selectedModel;
   const selectedChoice = modelRegistry.models.find(m => m.id === selectedModel)!;
   $<HTMLElement>("#compose-model-note").textContent = selectedChoice.description;
+  $<HTMLElement>("#compose-model-status").textContent = busy ? "Generating this version…"
+    : !ids.length ? "Choose recordings to check saved versions."
+    : fresh || available ? "Saved · ready to play."
+    : `Needs generation${selectedChoice.characteristics.length ? ` · ${selectedChoice.characteristics.join(", ").toLowerCase()}` : ""}.`;
   $<HTMLFieldSetElement>("#ace-task").hidden = selectedChoice.engine !== "ace-step";
   $<HTMLInputElement>("#strength").closest<HTMLElement>(".field")!.hidden = selectedChoice.engine !== "ace-step";
   if (composer.aceOn) $<HTMLElement>("#model-summary").textContent = `${selectedChoice.label}${composer.spec().ace?.seed === undefined ? "" : ` · seed ${composer.spec().ace?.seed}`}`;
@@ -633,10 +642,10 @@ $<HTMLSelectElement>("#compose-model").addEventListener("change", async () => {
   renderDock();
   if (result && composer) {
     const key = specKey(composer.spec(), catalog);
-    const id = rendered.get(key);
+    const id = savedPiece(key) ?? rendered.anyId(key);
     const manifest = id ? await piece(id, selectedModel).catch(() => null) : null;
     if (manifest && revision === modelChoiceRevision && !busy && key === specKey(composer.spec(), catalog)) {
-      renderedModels.set(key, renderedModel(manifest));
+      rendered.remember(key, renderedModel(manifest), manifest.id, manifest.generation?.model_config_sha256);
       pieceKey = key;
       showResult(manifest, { seat: false, autoplay: false, scroll: false });
     }
@@ -650,11 +659,11 @@ async function compose(newTake = false) {
   const spec = composer.spec();
   const key = specKey(spec, catalog);
   if (!newTake && result && key === pieceKey && (!spec.ace || modelMatches(result, modelRegistry.models.find(m=>m.id===selectedModel)!))) return;
-  const known = newTake ? undefined : rendered.get(key);
+  const known = newTake ? undefined : savedPiece(key) ?? rendered.anyId(key);
   if (known) {
     const manifest = await piece(known, spec.ace ? selectedModel : undefined).catch(() => null);
     if (manifest && (!spec.ace || manifest.stems.ace && modelSatisfies(renderedModel(manifest), selectedModel))) {
-      renderedModels.set(key, manifest.stems.ace ? renderedModel(manifest) : null);
+      rendered.remember(key, manifest.stems.ace ? renderedModel(manifest) : null, manifest.id, manifest.generation?.model_config_sha256);
       pieceKey = key;
       showResult(manifest, { seat: false, autoplay: true });
       return;
@@ -744,8 +753,7 @@ async function followComposition(initial: Response, restore = false) {
         } else if (message.type === "done") {
           rememberJob(null);
           pieceKey = specKey(compositionJob?.spec ?? message.manifest.spec, catalog);
-          rendered.set(pieceKey, message.manifest.id);
-          renderedModels.set(pieceKey, message.manifest.stems.ace ? renderedModel(message.manifest) : null);
+          rendered.remember(pieceKey, message.manifest.stems.ace ? renderedModel(message.manifest) : null, message.manifest.id, message.manifest.generation?.model_config_sha256);
           compositionError = "";
           busy = false;
           $<HTMLElement>("#compose-inputs").hidden = true;
@@ -796,8 +804,7 @@ function showResult(manifest: Manifest | null, options: { seat: boolean; autopla
   if (options.seat && composer && !isStatic) {
     composer.load(manifest);
     pieceKey = specKey(manifest.spec, catalog);
-    rendered.set(pieceKey, manifest.id);
-    renderedModels.set(pieceKey, manifest.stems.ace ? renderedModel(manifest) : null);
+    rendered.remember(pieceKey, manifest.stems.ace ? renderedModel(manifest) : null, manifest.id, manifest.generation?.model_config_sha256);
     const updatedKey = specKey(composer.spec(), catalog);
     if (updatedKey !== pieceKey) previousVersions.set(updatedKey, manifest.id);
   }
@@ -848,29 +855,11 @@ function resultParts(): MapPart[] {
 }
 
 function gains(): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (!result) return out;
-  result.parts.forEach((_, i) => {
-    out[`animal-${i}`] = stemOn.animal && partOn[i] ? 1 : 0;
-    out[`guide-${i}`] = stemOn.guide && partOn[i] ? 1 : 0;
-  });
-  out.response = stemOn.response ? 1 : 0;
-  out.ace = stemOn.ace ? 1 : 0;
-  return out;
+  return result ? playbackGains(result, stemOn, partOn) : {};
 }
 
 function tracks(): Track[] {
-  if (!result) return [];
-  const g = gains();
-  const out: Track[] = result.parts.flatMap((p, i) => [
-    { key: `animal-${i}`, url: fileUrl(p.files.animal), gain: g[`animal-${i}`] ?? 0 },
-    { key: `guide-${i}`, url: fileUrl(p.files.guide), gain: g[`guide-${i}`] ?? 0 },
-  ]);
-  for (const key of ["response", "ace"] as const) {
-    const stem = result.stems[key];
-    if (stem) out.push({ key, url: fileUrl(stem.audio), gain: g[key] ?? 0 });
-  }
-  return out;
+  return result ? playbackTracks(result, gains()) : [];
 }
 
 /** Concert and technical views share the same playback state. */

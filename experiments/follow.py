@@ -680,14 +680,40 @@ def precompute_trios_command(
     offload: Annotated[bool, typer.Option(help="CPU offload between stages when GPU memory is limited.")] = False,
     workers: Annotated[int, typer.Option(min=1, max=8, help="CPU workers preparing guides and playback files; GPU jobs stay sequential.")] = 4,
     dry_run: Annotated[bool, typer.Option(help="Count finished and pending trios without writing files or loading the model.")] = False,
+    model: Annotated[str, typer.Option(help="Configured music model id, such as base or stable-audio-3-small.")] = "base",
 ):
-    """Batch every unordered map trio with local ACE-Step Base; load once and resume on rerun."""
+    """Batch every unordered map trio locally; load the selected model once and resume on rerun."""
     from .follow_precompute import precompute_trios
 
     try:
-        path = precompute_trios(Layout(data_dir), load_config(), source, ace_root, offload, workers, dry_run)
+        path = precompute_trios(Layout(data_dir), load_config(), source, ace_root, offload, workers, dry_run, model_variant=model)
         if path is not None:
             typer.echo(path)
+    except (ValueError, subprocess.CalledProcessError) as error:
+        typer.echo(f"ERROR: {error}. Rerun the same command to resume the batch.", err=True)
+        raise typer.Exit(2) from error
+
+
+@app.command("precompute")
+def precompute_command(
+    data_dir: DataOption = DEFAULT_DATA,
+    source: SourcesOption = None,
+    model: Annotated[str, typer.Option(help="Configured model id; each model keeps its own ensemble indices.")] = "base",
+    size: Annotated[list[int] | None, typer.Option(min=2, max=3, help="Repeat for duos (2) and trios (3); defaults to both.")] = None,
+    workers: Annotated[int, typer.Option(min=1, max=8, help="CPU workers; GPU generation stays sequential.")] = 4,
+    dry_run: Annotated[bool, typer.Option(help="Count pieces without writing files or loading the model.")] = False,
+    ace_root: Annotated[Path | None, typer.Option(help="Local ACE-Step checkout, for ACE models.")] = None,
+    offload: Annotated[bool, typer.Option(help="Offload the ACE model between GPU stages.")] = False,
+):
+    """Precompute duos and trios together with one local model load."""
+    from .follow_precompute import precompute_combinations
+
+    try:
+        paths = precompute_combinations(Layout(data_dir), load_config(), size or [2, 3], source, ace_root, offload,
+                                        workers, local=True, dry_run=dry_run, model_variant=model)
+        if paths is not None:
+            for path in paths if isinstance(paths, list) else [paths]:
+                typer.echo(path)
     except (ValueError, subprocess.CalledProcessError) as error:
         typer.echo(f"ERROR: {error}. Rerun the same command to resume the batch.", err=True)
         raise typer.Exit(2) from error
