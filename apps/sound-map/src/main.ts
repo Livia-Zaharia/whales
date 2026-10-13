@@ -7,7 +7,7 @@ import { SPECIES } from "./lib/species.ts";
 import { renderIndividualTracks, renderLanes, renderScores, renderSelectedTracks, partColor } from "./lanes.ts";
 import { catalogUrl, comboUrl, combosUrl, fileUrl, isStatic } from "./lib/api.ts";
 import { activePulses, soundingParts } from "./lib/pulses.ts";
-import { precomputedPieces, specKey } from "./lib/precomputed.ts";
+import { earlierPieces, precomputedPieces, specKey } from "./lib/precomputed.ts";
 import { readComposition } from "./lib/combine-reader.ts";
 import { bundledModels, isModelRegistry, modelLabel, modelMatches, modelSatisfies, renderedModel } from "./lib/model-variant.ts";
 import { initialCatalog, isCatalog, sameCatalog, saveCatalog } from "./lib/catalog-snapshot.ts";
@@ -204,6 +204,7 @@ const preview = new Audio();
 let pieceKey: string | null = null; // the orchestra spec the piece on screen was made from
 const rendered = new Map<string, string>(); // precomputed ensembles, plus pieces composed or opened this session
 const renderedModels = new Map<string, ModelVariant | null>();
+const previousVersions = new Map<string, string>();
 let modelRegistry = bundledModels;
 let selectedModel: ModelVariant = modelRegistry.default_model;
 try { const saved = sessionStorage.getItem("whales-compose-model"); if (modelRegistry.models.some(m => m.id === saved)) selectedModel = saved!; } catch { /* Use the configured default. */ }
@@ -232,6 +233,7 @@ async function loadPrecomputed() {
     json<PrecomputedIndex>(fileUrl(path), { signal: AbortSignal.timeout(10_000) }).catch(() => null)));
   for (const index of indices) {
     for (const [key, id] of precomputedPieces(index, catalog)) { rendered.set(key, id); renderedModels.set(key, "base"); precomputedIds.add(id); }
+    for (const [key, id] of earlierPieces(index, catalog)) previousVersions.set(key, id);
   }
   if (dockReady) renderDock();
   if (summaries.size) void loadSaved();
@@ -493,6 +495,10 @@ function renderDock() {
     : compositionError ? "Try again" : available ? "Play saved piece" : upgrade ? `Compose with ${selectedChoice.label}` : result ? "Update piece" : "Compose piece";
   combine.hidden = fresh && !busy;
   combine.classList.toggle("pending", ready && !fresh && result !== null);
+  const previous = $<HTMLButtonElement>("#previous-piece");
+  const previousId = previousVersions.get(key);
+  previous.hidden = !previousId || previousId === result?.id;
+  previous.disabled = busy;
   take.disabled = !ready || !composer.aceOn || !canGenerate;
   take.hidden = ids.length === 0;
   $<HTMLButtonElement>("#clear").disabled = busy || ids.length === 0;
@@ -608,6 +614,10 @@ $<HTMLButtonElement>("#clear").addEventListener("click", () => {
   composer?.clear();
 });
 $<HTMLButtonElement>("#combine").addEventListener("click", () => void compose());
+$<HTMLButtonElement>("#previous-piece").addEventListener("click", () => {
+  const id = composer && previousVersions.get(specKey(composer.spec(), catalog));
+  if (id) void openPiece(id);
+});
 $<HTMLButtonElement>("#take").addEventListener("click", () => void compose(true));
 $<HTMLSelectElement>("#compose-model").addEventListener("change", async () => {
   if (busy) return;
@@ -782,9 +792,11 @@ function showResult(manifest: Manifest | null, options: { seat: boolean; autopla
   $<HTMLButtonElement>("#programme-listen").disabled = false;
   if (options.seat && composer && !isStatic) {
     composer.load(manifest);
-    pieceKey = specKey(composer.spec(), catalog);
+    pieceKey = specKey(manifest.spec, catalog);
     rendered.set(pieceKey, manifest.id);
     renderedModels.set(pieceKey, manifest.stems.ace ? renderedModel(manifest) : null);
+    const updatedKey = specKey(composer.spec(), catalog);
+    if (updatedKey !== pieceKey) previousVersions.set(updatedKey, manifest.id);
   }
   partOn = manifest.parts.map(() => true);
   stemOn.ace = Boolean(manifest.stems.ace);

@@ -127,11 +127,17 @@ smaller eight-step model. **ACE-Step Turbo** is also available as a fast preview
 Base is selected by default. The models receive the same measured audio guide,
 caption, duration and seed, but can choose different instruments and musical
 detail; Stable Audio's transformation controls differ from ACE-Step's.
+Default captions name only the selected players' guide instruments and ask the
+model to preserve the guide's timing and melodic contours. Custom captions remain
+editable. Older automatic-prompt pieces stay playable through **Play previous
+version**; composing with the corrected prompt creates a separate piece.
 
 App settings live in `resources/orchestra-app.json`. Its `music` section configures
 the enabled model list, default and primary model, recommendations, characteristics
 such as “Slow” and “Fast”, explanatory text, checkpoints and generation settings.
 Edit this file to change the selector; the server supplies it to the frontend.
+`music.caption_template` and `music.instrument_prompt_names` configure the shared
+default prompt and the model-facing names for the guide instruments.
 Every model keeps separate audio and manifests for the same ensemble and seed.
 Filenames include `generated-SEED-MODEL-SETTINGS_HASH`, and selecting a model opens
 its saved version or generates it when missing. The main saved piece stays Base

@@ -1,16 +1,14 @@
 import { buildSpec } from "./arrange.ts";
+import { automaticCaption, ensembleCaption } from "./caption.ts";
 import type { Catalog, PrecomputedIndex, Spec } from "./types.ts";
 
 /** Same defaults as the Python plan: automatic registers and the catalogue seed are resolved. */
 export function specKey(spec: Spec, catalog: Catalog): string {
   const sources = new Map(catalog.sources.map((s) => [s.id, s]));
-  const species = new Set(spec.parts.map((p) => sources.get(p.source)?.species));
-  const only = species.size === 1 ? [...species][0] : undefined;
-  const caption = only ? catalog.species[only].caption : catalog.combination.caption;
   const parts = spec.parts.map((p) => ({ ...p, shift_octaves: p.shift_octaves ?? sources.get(p.source)?.register_shift_octaves ?? null }));
   const ace = spec.ace ? {
     task: spec.ace.task,
-    caption: spec.ace.caption || caption,
+    caption: (spec.ace.caption || ensembleCaption(spec.parts, catalog)).slice(0, 400),
     audio_cover_strength: spec.ace.audio_cover_strength ?? catalog.combination.audio_cover_strength,
     seed: spec.ace.seed ?? catalog.seed,
   } : null;
@@ -22,4 +20,15 @@ export function precomputedPieces(index: PrecomputedIndex | null, catalog: Catal
   // stays playable when the recordings and composition settings are unchanged.
   if (!index || index.config_sha256 !== catalog.config_sha256) return new Map();
   return new Map(index.pieces.map((p) => [specKey(p.spec, catalog), p.id]));
+}
+
+/** Keep older default music playable without satisfying a request for the corrected prompt. */
+export function earlierPieces(index: PrecomputedIndex | null, catalog: Catalog): Map<string, string> {
+  if (!index || index.config_sha256 !== catalog.config_sha256) return new Map();
+  return new Map(index.pieces.flatMap(({spec, id}) => {
+    if (!spec.ace || !automaticCaption(spec, catalog)) return [];
+    const updated = { ...spec, ace: { ...spec.ace, caption: ensembleCaption(spec.parts, catalog) } };
+    const key = specKey(updated, catalog);
+    return key === specKey(spec, catalog) ? [] : [[key, id] as const];
+  }));
 }

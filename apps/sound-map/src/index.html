@@ -75,7 +75,7 @@
         </div>
         <div class="hall-seating"><ol id="hall-seats" aria-label="Orchestra chairs"></ol></div>
         <div class="model-choice" data-server-only><label for="compose-model">Music model</label><select id="compose-model" aria-describedby="compose-model-note"><option value="base">ACE-Step Base · Slow</option><option value="stable-audio-3-small">Stable Audio 3 Small Music · Fast</option><option value="turbo">ACE-Step Turbo · Fast preview</option></select><p class="small" id="compose-model-note">Choose Base for a full composition or Stable Audio for a faster alternative. Each model keeps its own version.</p></div>
-        <div class="dock-actions"><p class="status" id="status" role="status"></p><button class="primary" id="combine" type="button">Compose piece</button></div>
+        <div class="dock-actions"><p class="status" id="status" role="status"></p><button class="primary" id="combine" type="button">Compose piece</button><button class="btn" id="previous-piece" type="button" hidden>Play previous version</button></div>
         <p class="compose-runtime" id="compose-runtime" hidden>This server has no CUDA GPU. Composing runs on the CPU and may take a while. Finished pieces are ready to play immediately.</p>
         <div class="compose-progress" id="compose-progress" hidden><div class="compose-progress-caption"><span id="compose-stage" role="status">Starting the composition engine…</span><span id="compose-percent"></span></div><progress id="compose-bar" max="100" aria-label="Estimated composition progress"></progress><span class="small" id="compose-elapsed">You can listen to the selected recordings while your piece is being made.</span></div>
         <p class="compose-error" id="compose-error" role="alert" hidden></p>

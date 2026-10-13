@@ -229,7 +229,7 @@ h1 em { font: italic 1.12em/.95 var(--serif); letter-spacing: -.04em }
 .model-choice { align-self: center; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px; width: min(640px, 100%); font-size: .8rem }
 .model-choice select { max-width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); font: inherit }
 .model-choice p { flex-basis: 100%; text-align: center; line-height: 1.6 }
-.dock-actions:has(#combine[hidden]):has(.status[hidden]) { display: none }
+.dock-actions:has(#combine[hidden]):has(.status[hidden]):has(#previous-piece[hidden]) { display: none }
 .status { font-size: .72rem; color: var(--muted); margin-right: auto; min-width: 0 }
 .status.bad { color: var(--bad) }
 #combine { justify-self: center; width: min(240px, 100%); min-width: 0; min-height: 64px; padding: 18px 36px; margin: 8px 0 18px; font-size: 1.1rem; font-weight: 600 }

@@ -88,8 +88,22 @@ changes in their areas.
   once it exists. Model settings fingerprints invalidate only that model's cache;
   changing display labels must not regenerate music. UI links include the model.
   Identical model requests share a job; different models use the shared queue.
+- **Composition prompts:** derive the default caption from the selected guide
+  instruments using `music.caption_template` and `music.instrument_prompt_names`
+  in `resources/orchestra-app.json`. Keep Python and frontend caption resolution
+  identical. Explicit custom captions stay intact; a legacy generic caption must
+  not satisfy a corrected-prompt request. Preserve its files, links and presets,
+  and expose saved legacy ensembles through **Play previous version**.
 - **`index.html` anchors:** `scripts/export.ts` parses `<title>`, the `./style.css`
   link and the `./main.ts` script tag. Keep them when editing the page.
+- **App previews:** open the running app's HTTP URL (normally
+  `http://127.0.0.1:3070/`; check the configured port), using a browser preview.
+  Never offer `apps/sound-map/src/index.html` as a file preview: it is source HTML
+  and its TypeScript will not run through `file://`. Start the app with
+  `uv run start` if needed. `bun run build` writes compiled assets, including the
+  map and catalog, to `data/output/sound-map-app/current/`; those assets and the
+  static export also need HTTP serving. Verify that the map renders before
+  sharing a preview.
 - **Pages and galleries** follow Input → Schema → Output. Keep original recordings
   playable, and label recorded, measured and generated material separately.
 - **Visual design:** the project owner dislikes too many separate panels and

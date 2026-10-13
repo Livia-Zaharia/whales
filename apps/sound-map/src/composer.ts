@@ -2,6 +2,7 @@
 // a timeline preview that mirrors Python's placement, and the ACE-Step request.
 
 import { buildSpec, clamp, draftFor, place, problems, totalDuration, type PlacedPart } from "./lib/arrange.ts";
+import { automaticCaption, ensembleCaption } from "./lib/caption.ts";
 import type { AceRequest, Arrangement, Catalog, Manifest, PartDraft, Source, Spec } from "./lib/types.ts";
 import { SPECIES_COLOR, type MapPart } from "./map.ts";
 
@@ -110,6 +111,10 @@ export class Composer {
   /** Seat a saved piece's players with its settings, so updating starts from it. */
   load(manifest: Manifest) {
     this.loadSpec({ ...manifest.spec, ace: manifest.stems.ace ? manifest.spec.ace : null });
+    if (automaticCaption(manifest.spec, this.catalog)) {
+      this.captionEdited = false;
+      this.refresh();
+    }
   }
 
   /** Restore the inputs of a queued or running composition after a reload. */
@@ -207,10 +212,7 @@ export class Composer {
 
   private syncModel() {
     const caption = $<HTMLTextAreaElement>("#caption");
-    const species = new Set(this.parts.map((p) => this.sources.get(p.source)?.species));
-    const only = species.size === 1 ? [...species][0] : undefined;
-    const fallback = only ? this.catalog.species[only].caption : this.catalog.combination.caption;
-    if (!this.captionEdited) caption.value = fallback;
+    if (!this.captionEdited) caption.value = ensembleCaption(this.parts, this.catalog);
     const on = this.aceOn;
     for (const id of ["#ace-task", "#strength", "#caption"]) $<HTMLInputElement>(id).disabled = !on;
     const task = document.querySelector<HTMLInputElement>('input[name="ace-task"]:checked')?.value ?? "cover";

@@ -2,6 +2,21 @@
   "music": {
     "default_model": "base",
     "primary_model": "base",
+    "caption_template": "Slow, spacious ambient chamber music featuring {instruments}. Use only these instruments; preserve the guide's timing and melodic contours. Instrumental, no vocals.",
+    "instrument_prompt_names": {
+      "bowed tone": "bowed strings",
+      "flute-like tone": "flute",
+      "wood mallet": "wooden mallets",
+      "reed tone": "reeds",
+      "horn tone": "horn",
+      "tuba tone": "tuba",
+      "organ tone": "organ",
+      "bell tone": "bells",
+      "pan flute": "pan flute",
+      "ocarina tone": "ocarina",
+      "theremin tone": "theremin",
+      "singing saw": "singing saw"
+    },
     "models": [
       {
         "id": "base",

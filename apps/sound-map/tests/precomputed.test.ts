@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildSpec, draftFor } from "../src/lib/arrange.ts";
-import { precomputedPieces, specKey } from "../src/lib/precomputed.ts";
+import { earlierPieces, precomputedPieces, specKey } from "../src/lib/precomputed.ts";
+import { ensembleCaption } from "../src/lib/caption.ts";
 import type { Catalog, PrecomputedIndex } from "../src/lib/types.ts";
 
 const catalog: Catalog = { ...await Bun.file(new URL("../demo/follow/catalog.json", import.meta.url)).json(), config_sha256: "test", render_version: 4 };
@@ -8,11 +9,11 @@ const [a, b] = catalog.sources;
 const request = buildSpec("", "layer", 1, [draftFor(a!), draftFor(b!)], { task: "cover", audio_cover_strength: 0.6 });
 const resolved = buildSpec("", "layer", 1, request.parts.map((p) => ({
   ...p, shift_octaves: catalog.sources.find((s) => s.id === p.source)!.register_shift_octaves,
-})), { task: "cover", audio_cover_strength: 0.6, seed: catalog.seed, caption: catalog.species[a!.species].caption });
+})), { task: "cover", audio_cover_strength: 0.6, seed: catalog.seed, caption: ensembleCaption(request.parts, catalog) });
 const index: PrecomputedIndex = { config_sha256: "test", render_version: 4, pieces: [{ id: "123456abcdef", spec: resolved }] };
 
 describe("precomputed playback lookup", () => {
-  test("every bundled duo matches the default composer request", async () => {
+  test("every bundled duo stays playable with its original prompt after renderer updates", async () => {
     const actualCatalog = await Bun.file(new URL("../demo/follow/catalog.json", import.meta.url)).json() as Catalog;
     const bundled = await Bun.file(new URL("../demo/follow/duos.json", import.meta.url)).json() as PrecomputedIndex;
     const pieces = precomputedPieces(bundled, actualCatalog);
@@ -23,11 +24,29 @@ describe("precomputed playback lookup", () => {
     expect(legacyPieces.size).toBe(pieces.size);
     for (const piece of bundled.pieces) {
       const parts = piece.spec.parts.map((p) => draftFor(sources.get(p.source)!));
-      const defaults = buildSpec("", "layer", 1, parts, { task: "cover", audio_cover_strength: actualCatalog.combination.audio_cover_strength });
+      const defaults = buildSpec("", "layer", 1, parts, { task: "cover", audio_cover_strength: actualCatalog.combination.audio_cover_strength, caption: piece.spec.ace!.caption });
       expect(pieces.get(specKey(defaults, actualCatalog))).toBe(piece.id);
       expect(legacyPieces.get(specKey(defaults, updatedCatalog))).toBe(piece.id);
       expect(pieces.get(specKey({ ...defaults, parts: [...defaults.parts].reverse() }, actualCatalog))).toBe(piece.id);
     }
+  });
+
+  test("all legacy duos remain available as earlier versions without replacing corrected requests", async () => {
+    const actualCatalog = await Bun.file(new URL("../demo/follow/catalog.json", import.meta.url)).json() as Catalog;
+    const bundled = await Bun.file(new URL("../demo/follow/duos.json", import.meta.url)).json() as PrecomputedIndex;
+    const saved = precomputedPieces(bundled, actualCatalog);
+    const earlier = earlierPieces(bundled, actualCatalog);
+    const sources = new Map(actualCatalog.sources.map(source => [source.id, source]));
+    expect(earlier.size).toBe(190);
+    for (const piece of bundled.pieces) {
+      const defaults = buildSpec("", "layer", 1, piece.spec.parts.map(part => draftFor(sources.get(part.source)!)),
+        {task: "cover", audio_cover_strength: actualCatalog.combination.audio_cover_strength});
+      const key = specKey(defaults, actualCatalog);
+      expect(earlier.get(key)).toBe(piece.id);
+      expect(saved.has(key)).toBe(false);
+    }
+    expect(earlierPieces({...bundled, config_sha256: "changed"}, actualCatalog).size).toBe(0);
+    expect(earlierPieces(index, catalog).size).toBe(0); // Already uses the corrected prompt.
   });
 
   test("default requests find the saved pair in either click order", () => {
