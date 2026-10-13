@@ -184,6 +184,10 @@ class TrioBatchTests(unittest.TestCase):
         folder = self.layout.output / "follow" / "combos" / plan(spec, self.config, prepared_sources(self.layout))["id"]
         retained = {path: path.read_bytes() for path in folder.glob("generated-*")}
         retained.update({path: path.read_bytes() for path in folder.glob("manifest-*.json")})
+        stable_folder = self.layout.output / "follow" / "combos" / plan(
+            spec, self.config, prepared_sources(self.layout), model_variant="stable-audio-3-small")["id"]
+        retained.update({path: path.read_bytes() for path in stable_folder.glob("generated-*")})
+        retained.update({path: path.read_bytes() for path in stable_folder.glob("manifest-*.json")})
         registry = model_registry()
         registry["default_model"] = "stable-audio-3-small"
         with patch("experiments.follow_models.model_registry", return_value=registry), \

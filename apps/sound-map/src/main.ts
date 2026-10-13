@@ -460,6 +460,7 @@ function orchestraChanged() {
 
 function renderDock() {
   if (!composer) return;
+  composer.setModel(selectedModel, modelRegistry);
   const ids = composer.ids();
   renderHallSeats(isStatic && result ? result.parts.map((part) => part.source) : ids);
   $<HTMLElement>("#seats").textContent = `${ids.length} seated · up to ${composer.max}`;
@@ -630,11 +631,13 @@ $<HTMLSelectElement>("#compose-model").addEventListener("change", async () => {
   try { sessionStorage.setItem("whales-compose-model", selectedModel); } catch { /* Selection still works. */ }
   compositionError = "";
   renderDock();
-  if (result && composer && pieceKey === specKey(composer.spec(), catalog)) {
-    const key = pieceKey;
-    const manifest = await piece(result.id, selectedModel).catch(() => null);
+  if (result && composer) {
+    const key = specKey(composer.spec(), catalog);
+    const id = rendered.get(key);
+    const manifest = id ? await piece(id, selectedModel).catch(() => null) : null;
     if (manifest && revision === modelChoiceRevision && !busy && key === specKey(composer.spec(), catalog)) {
       renderedModels.set(key, renderedModel(manifest));
+      pieceKey = key;
       showResult(manifest, { seat: false, autoplay: false, scroll: false });
     }
   }

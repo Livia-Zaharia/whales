@@ -27,6 +27,8 @@ class MusicModelsTest(unittest.TestCase):
         unsafe = copy.deepcopy(registry)
         unsafe["models"][0]["id"] = "../base"
         broken.append(unsafe)
+        broken.extend([registry | {"caption_profiles": {"base": "unknown"}},
+                       registry | {"caption_profiles": {"../missing": "legacy"}}])
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "app.json"
             for config in broken:

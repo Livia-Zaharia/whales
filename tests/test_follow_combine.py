@@ -250,7 +250,8 @@ class CombineTests(unittest.TestCase):
         from experiments.follow_combine import combine
         from experiments.follow_models import model_registry
 
-        spec = {"parts": [{"source": "hb", "trim_s": [0, 4]}], "ace": {"task": "cover", "seed": 123}}
+        spec = {"parts": [{"source": "hb", "trim_s": [0, 4]}],
+                "ace": {"task": "cover", "seed": 123, "caption": "Shared comparison prompt"}}
         registry = copy.deepcopy(model_registry())
         calls = []
         def render(job, results_path):

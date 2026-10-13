@@ -71,8 +71,8 @@ def run_local_base(layout, config, jobs, jobs_path, results_path, ace_root, offl
 def render_piece(args):
     layout, config, spec, finalize = args
     if finalize:
-        folder = directories(layout)[1] / "combos" / plan(spec, config, prepared_sources(layout))["id"]
-        combo = plan(spec, config, prepared_sources(layout))
+        combo = plan(spec, config, prepared_sources(layout), model_variant="base")
+        folder = directories(layout)[1] / "combos" / combo["id"]
         paths = generation_paths(folder, combo["ace"]["seed"], "base", music_model("base"))
         if not paths["wav"].exists() or not paths["results"].exists():
             raise ValueError(f"Missing generated music in {folder}; rerun the batch to resume")
@@ -142,7 +142,7 @@ def precompute_combinations(layout: Layout, config: dict, size: int, only=None, 
     interim, output = directories(layout)
     prepared = prepared_sources(layout)
     specs = combination_specs(config, prepared, size, only)
-    combos = [plan(spec, config, prepared) for spec in specs]
+    combos = [plan(spec, config, prepared, model_variant="base") for spec in specs]
     model = music_model("base")
     if model["engine"] != "ace-step":
         raise ValueError("The Base batch requires an ACE-Step model in the music registry")

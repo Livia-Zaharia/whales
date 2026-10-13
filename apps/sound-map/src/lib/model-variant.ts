@@ -8,6 +8,9 @@ export function isModelRegistry(value: unknown): value is ModelRegistry {
   const registry = value as ModelRegistry;
   if (!Array.isArray(registry.models) || !registry.models.length) return false;
   const ids = registry.models.map(m => m.id);
+  const profiles = registry.caption_profiles;
+  if (profiles !== undefined && (!profiles || typeof profiles !== "object" || Array.isArray(profiles)
+      || Object.entries(profiles).some(([id, profile]) => !/^[a-z][a-z0-9-]{0,63}$/.test(id) || !["legacy", "instruments"].includes(profile)))) return false;
   return new Set(ids).size === ids.length && ids.includes(registry.default_model) && ids.includes(registry.primary_model)
     && registry.models.every(m => /^[a-z][a-z0-9-]{0,63}$/.test(m.id) && typeof m.label === "string" && typeof m.description === "string"
       && Array.isArray(m.characteristics) && m.characteristics.every(c => typeof c === "string")

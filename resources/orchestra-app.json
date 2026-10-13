@@ -2,6 +2,11 @@
   "music": {
     "default_model": "base",
     "primary_model": "base",
+    "caption_profiles": {
+      "base": "legacy",
+      "turbo": "legacy",
+      "stable-audio-3-small": "instruments"
+    },
     "caption_template": "Slow, spacious ambient chamber music featuring {instruments}. Use only these instruments; preserve the guide's timing and melodic contours. Instrumental, no vocals.",
     "instrument_prompt_names": {
       "bowed tone": "bowed strings",
@@ -25,7 +30,7 @@
         "checkpoint": "acestep-v15-base",
         "steps": 50,
         "guidance_scale": 7.0,
-        "description": "Full composition with 50 steps and guidance controls. Takes longer, especially on CPU. Recommended when you want a fuller musical interpretation; other model versions are kept.",
+        "description": "Full composition with 50 steps and guidance controls, using the earlier ambient style prompt. Takes longer, especially on CPU. Recommended when you want a fuller musical interpretation; other model versions are kept.",
         "characteristics": [
           "Slow"
         ],
@@ -41,7 +46,7 @@
         "guidance_scale": 1.0,
         "init_noise_level": 0.6,
         "max_duration_s": 120,
-        "description": "A smaller, fast eight-step model with a different musical interpretation. Uses the same guide and caption; its audio transformation controls differ from ACE-Step.",
+        "description": "A smaller, fast eight-step model using a prompt focused on the selected guide instruments. Its musical interpretation and audio transformation controls differ from ACE-Step.",
         "characteristics": [
           "Fast"
         ],
@@ -54,7 +59,7 @@
         "checkpoint": "acestep-v15-turbo",
         "steps": 8,
         "guidance_scale": 1.0,
-        "description": "Fast eight-step preview. Instruments and musical detail can differ from Base. Saved separately so you can compare the two.",
+        "description": "Fast eight-step preview using the earlier ambient style prompt. Instruments and musical detail can differ from Base. Saved separately so you can compare the two.",
         "characteristics": [
           "Fast preview"
         ],

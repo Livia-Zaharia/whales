@@ -105,6 +105,7 @@ export interface MusicModel {
 export interface ModelRegistry {
   default_model: string;
   primary_model: string;
+  caption_profiles?: Record<string, "legacy" | "instruments">;
   models: MusicModel[];
 }
 

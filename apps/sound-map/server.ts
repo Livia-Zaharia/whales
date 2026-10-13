@@ -245,7 +245,7 @@ async function combine(request: Request): Promise<Response> {
     // The same defaults and layer ordering used by saved-piece lookup in the UI.
     spec = { ...spec, ace: model ? spec.ace : null };
     const sourceCatalog = await (await catalog()).json() as Catalog;
-    key = sourceCatalog.config_sha256 + specKey(spec, sourceCatalog);
+    key = sourceCatalog.config_sha256 + specKey(spec, sourceCatalog, variant, registry);
   } catch {
     return Response.json({ error: "The combination settings could not be read. Choose recordings and try again." }, { status: 400 });
   }

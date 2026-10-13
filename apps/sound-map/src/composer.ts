@@ -2,8 +2,8 @@
 // a timeline preview that mirrors Python's placement, and the ACE-Step request.
 
 import { buildSpec, clamp, draftFor, place, problems, totalDuration, type PlacedPart } from "./lib/arrange.ts";
-import { automaticCaption, ensembleCaption } from "./lib/caption.ts";
-import type { AceRequest, Arrangement, Catalog, Manifest, PartDraft, Source, Spec } from "./lib/types.ts";
+import { automaticCaption, defaultCaption } from "./lib/caption.ts";
+import type { AceRequest, Arrangement, Catalog, Manifest, ModelRegistry, PartDraft, Source, Spec } from "./lib/types.ts";
 import { SPECIES_COLOR, type MapPart } from "./map.ts";
 
 const $ = <T extends Element>(selector: string) => document.querySelector(selector) as T;
@@ -16,6 +16,8 @@ export class Composer {
   private gap_s = 1;
   private seed: number | undefined;
   private captionEdited = false;
+  private model: string | undefined;
+  private promptRegistry: ModelRegistry | undefined;
   private readonly sources: Map<string, Source>;
 
   constructor(private readonly catalog: Catalog, private readonly onChange: () => void) {
@@ -63,6 +65,13 @@ export class Composer {
 
   get aceOn(): boolean {
     return $<HTMLInputElement>("#ace-on").checked;
+  }
+
+  setModel(model: string, registry: ModelRegistry) {
+    if (this.model === model && this.promptRegistry === registry) return;
+    this.model = model;
+    this.promptRegistry = registry;
+    this.syncModel();
   }
 
   /** Recording ids in seat order. */
@@ -212,7 +221,7 @@ export class Composer {
 
   private syncModel() {
     const caption = $<HTMLTextAreaElement>("#caption");
-    if (!this.captionEdited) caption.value = ensembleCaption(this.parts, this.catalog);
+    if (!this.captionEdited) caption.value = defaultCaption(this.parts, this.catalog, this.model, this.promptRegistry);
     const on = this.aceOn;
     for (const id of ["#ace-task", "#strength", "#caption"]) $<HTMLInputElement>(id).disabled = !on;
     const task = document.querySelector<HTMLInputElement>('input[name="ace-task"]:checked')?.value ?? "cover";

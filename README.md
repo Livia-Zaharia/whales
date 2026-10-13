@@ -124,20 +124,25 @@ server detects no CUDA.
 The model selector recommends **ACE-Step Base · Slow** for a full composition
 (50 steps and guidance controls) and **Stable Audio 3 Small Music · Fast** for a
 smaller eight-step model. **ACE-Step Turbo** is also available as a fast preview.
-Base is selected by default. The models receive the same measured audio guide,
-caption, duration and seed, but can choose different instruments and musical
-detail; Stable Audio's transformation controls differ from ACE-Step's.
-Default captions name only the selected players' guide instruments and ask the
-model to preserve the guide's timing and melodic contours. Custom captions remain
-editable. Older automatic-prompt pieces stay playable through **Play previous
-version**; composing with the corrected prompt creates a separate piece.
+Base is selected by default. The models receive the measured audio guide, duration
+and seed. ACE-Step Base and Turbo use the earlier ambient style caption; Stable
+Audio uses a caption naming the selected guide instruments and asking it to
+preserve their timing and melodic contours. Each model can interpret the sound
+differently; Stable Audio's transformation controls differ from ACE-Step's.
+Custom captions remain editable and override those defaults. An explicit shared
+caption keeps the same piece id across models; different resolved captions create
+separate pieces. Other automatic-prompt versions remain playable through **Play
+previous version**. Existing duos again match the default ACE-Step prompt.
 
 App settings live in `resources/orchestra-app.json`. Its `music` section configures
 the enabled model list, default and primary model, recommendations, characteristics
 such as “Slow” and “Fast”, explanatory text, checkpoints and generation settings.
 Edit this file to change the selector; the server supplies it to the frontend.
 `music.caption_template` and `music.instrument_prompt_names` configure the shared
-default prompt and the model-facing names for the guide instruments.
+instrument-focused prompt and the model-facing names for the guide instruments.
+`music.caption_profiles` selects `legacy` or `instruments` independently for each
+model. The legacy profile uses the species caption for a single species and the
+ensemble style caption from `resources/follow-music.json` for mixed species.
 Every model keeps separate audio and manifests for the same ensemble and seed.
 Filenames include `generated-SEED-MODEL-SETTINGS_HASH`, and selecting a model opens
 its saved version or generates it when missing. The main saved piece stays Base

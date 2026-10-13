@@ -1,14 +1,14 @@
 import { buildSpec } from "./arrange.ts";
-import { automaticCaption, ensembleCaption } from "./caption.ts";
-import type { Catalog, PrecomputedIndex, Spec } from "./types.ts";
+import { automaticCaption, defaultCaption, ensembleCaption, legacyCaption } from "./caption.ts";
+import type { Catalog, ModelRegistry, PrecomputedIndex, Spec } from "./types.ts";
 
 /** Same defaults as the Python plan: automatic registers and the catalogue seed are resolved. */
-export function specKey(spec: Spec, catalog: Catalog): string {
+export function specKey(spec: Spec, catalog: Catalog, model?: string, registry?: ModelRegistry): string {
   const sources = new Map(catalog.sources.map((s) => [s.id, s]));
   const parts = spec.parts.map((p) => ({ ...p, shift_octaves: p.shift_octaves ?? sources.get(p.source)?.register_shift_octaves ?? null }));
   const ace = spec.ace ? {
     task: spec.ace.task,
-    caption: (spec.ace.caption || ensembleCaption(spec.parts, catalog)).slice(0, 400),
+    caption: (spec.ace.caption || defaultCaption(spec.parts, catalog, model, registry)).slice(0, 400),
     audio_cover_strength: spec.ace.audio_cover_strength ?? catalog.combination.audio_cover_strength,
     seed: spec.ace.seed ?? catalog.seed,
   } : null;
@@ -27,8 +27,10 @@ export function earlierPieces(index: PrecomputedIndex | null, catalog: Catalog):
   if (!index || index.config_sha256 !== catalog.config_sha256) return new Map();
   return new Map(index.pieces.flatMap(({spec, id}) => {
     if (!spec.ace || !automaticCaption(spec, catalog)) return [];
-    const updated = { ...spec, ace: { ...spec.ace, caption: ensembleCaption(spec.parts, catalog) } };
-    const key = specKey(updated, catalog);
-    return key === specKey(spec, catalog) ? [] : [[key, id] as const];
+    return [...new Set([legacyCaption(spec.parts, catalog), ensembleCaption(spec.parts, catalog)])].flatMap(caption => {
+      const updated = { ...spec, ace: { ...spec.ace!, caption } };
+      const key = specKey(updated, catalog);
+      return key === specKey(spec, catalog) ? [] : [[key, id] as const];
+    });
   }));
 }

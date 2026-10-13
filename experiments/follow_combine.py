@@ -25,7 +25,7 @@ from .follow import contour_at, directories, onsets, respond, render_guide, run_
 from .follow_gallery import MUSIC_BAND, event_data, listening
 from .follow_metrics import leakage, load_mono, onset_envelope, timing
 from .follow_models import model_registry, music_model, model_fingerprint, rendered_model, run_stable, generation_paths
-from .follow_prompt import ensemble_caption
+from .follow_prompt import default_caption
 
 WORLD = ROOT / "resources" / "maps" / "world-map-data.json"
 COUNTRIES = ROOT / "resources" / "maps" / "world-countries-110m.geojson"
@@ -33,7 +33,7 @@ ARRANGEMENTS = ("layer", "sequence")
 TASKS = ("cover", "lego")
 # Bump when rendering, response or scoring code changes: saved renders with another version are rebuilt
 # on their next request. Ids hash the spec and config, not the code. Manifests without the field are version 1.
-RENDER_VERSION = 8
+RENDER_VERSION = 9
 
 
 def report_progress(percent: float, stage: str):
@@ -89,7 +89,7 @@ def finite(value, name: str):
     return number
 
 
-def plan(spec: dict, config: dict, prepared: dict):
+def plan(spec: dict, config: dict, prepared: dict, model_variant: str | None = None):
     """Validate a spec and resolve every part's trim, offset, gain and register; the id hashes the result."""
     limits = config["combination"]
     arrangement = spec.get("arrangement", "layer")
@@ -140,7 +140,7 @@ def plan(spec: dict, config: dict, prepared: dict):
         if task not in TASKS:
             raise ValueError(f"ace.task must be one of {', '.join(TASKS)}")
         single = config["species"][next(iter(species))] if len(species) == 1 else None
-        ace = {"task": task, "caption": str(ace.get("caption") or ensemble_caption(species, config))[:400],
+        ace = {"task": task, "caption": str(ace.get("caption") or default_caption(species, config, model_variant))[:400],
                "audio_cover_strength": min(1.0, max(0.0, finite(ace.get("audio_cover_strength", limits["audio_cover_strength"]), "audio_cover_strength"))),
                "track": ace.get("track") or (single["lego_track"] if single else "keyboard"), "seed": int(ace.get("seed", config["seed"]))}
     combo = {"arrangement": arrangement, "gap_s": gap, "parts": resolved, "duration_s": duration, "ace": ace or None}
@@ -257,7 +257,7 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
     report_progress(2, "Preparing the selected recordings…")
     _, output = directories(layout)
     prepared = prepared_sources(layout)
-    combo = plan(spec, config, prepared)
+    combo = plan(spec, config, prepared, model_variant)
     if combo["duration_s"] > model.get("max_duration_s", float("inf")):
         raise ValueError(f"{model['label']} supports pieces up to {model['max_duration_s']} seconds. Shorten the piece or choose another model.")
     folder = output / "combos" / combo["id"]

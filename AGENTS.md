@@ -80,20 +80,24 @@ changes in their areas.
   recomputing anything. Bump `RENDER_VERSION` in `experiments/follow_combine.py`
   whenever rendering, response or scoring code changes, so stale renders get rebuilt.
   `main.py follow combine --rerender` rebuilds a single piece.
-- **Multiple models:** the ensemble spec and seed keep the same piece id across
-  models. Preserve each model's audio and manifest; selecting Base must not erase
+- **Multiple models:** the same resolved ensemble spec and seed keep the same piece
+  id across models; different resolved captions have distinct ids. Preserve each
+  model's audio and manifest; selecting Base must not erase
   Turbo or Stable Audio. Use `generation_paths` in `experiments/follow_models.py`
   for `generated-SEED-MODEL-SETTINGS_HASH` filenames. Per-model manifests are
   `manifest-MODEL.json`; `manifest.json` points to the configured primary model
   once it exists. Model settings fingerprints invalidate only that model's cache;
   changing display labels must not regenerate music. UI links include the model.
   Identical model requests share a job; different models use the shared queue.
-- **Composition prompts:** derive the default caption from the selected guide
-  instruments using `music.caption_template` and `music.instrument_prompt_names`
-  in `resources/orchestra-app.json`. Keep Python and frontend caption resolution
-  identical. Explicit custom captions stay intact; a legacy generic caption must
-  not satisfy a corrected-prompt request. Preserve its files, links and presets,
-  and expose saved legacy ensembles through **Play previous version**.
+- **Composition prompts:** `music.caption_profiles` in `resources/orchestra-app.json`
+  chooses `legacy` (earlier species/ensemble style captions, default for ACE-Step)
+  or `instruments` (selected guide instruments, default for Stable Audio) per model.
+  The latter uses `music.caption_template` and `music.instrument_prompt_names`.
+  Keep Python and frontend caption resolution identical; Base batches explicitly
+  resolve the Base profile even when the app default is another model. Explicit
+  custom captions stay intact. Different prompts must not share a generation cache;
+  preserve existing files, links and presets and expose alternative automatic-prompt
+  ensembles through **Play previous version**.
 - **`index.html` anchors:** `scripts/export.ts` parses `<title>`, the `./style.css`
   link and the `./main.ts` script tag. Keep them when editing the page.
 - **App previews:** open the running app's HTTP URL (normally

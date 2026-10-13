@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildSpec, draftFor } from "../src/lib/arrange.ts";
 import { earlierPieces, precomputedPieces, specKey } from "../src/lib/precomputed.ts";
-import { ensembleCaption } from "../src/lib/caption.ts";
+import { defaultCaption, ensembleCaption } from "../src/lib/caption.ts";
 import type { Catalog, PrecomputedIndex } from "../src/lib/types.ts";
 
 const catalog: Catalog = { ...await Bun.file(new URL("../demo/follow/catalog.json", import.meta.url)).json(), config_sha256: "test", render_version: 4 };
@@ -9,7 +9,7 @@ const [a, b] = catalog.sources;
 const request = buildSpec("", "layer", 1, [draftFor(a!), draftFor(b!)], { task: "cover", audio_cover_strength: 0.6 });
 const resolved = buildSpec("", "layer", 1, request.parts.map((p) => ({
   ...p, shift_octaves: catalog.sources.find((s) => s.id === p.source)!.register_shift_octaves,
-})), { task: "cover", audio_cover_strength: 0.6, seed: catalog.seed, caption: ensembleCaption(request.parts, catalog) });
+})), { task: "cover", audio_cover_strength: 0.6, seed: catalog.seed, caption: defaultCaption(request.parts, catalog) });
 const index: PrecomputedIndex = { config_sha256: "test", render_version: 4, pieces: [{ id: "123456abcdef", spec: resolved }] };
 
 describe("precomputed playback lookup", () => {
@@ -24,7 +24,7 @@ describe("precomputed playback lookup", () => {
     expect(legacyPieces.size).toBe(pieces.size);
     for (const piece of bundled.pieces) {
       const parts = piece.spec.parts.map((p) => draftFor(sources.get(p.source)!));
-      const defaults = buildSpec("", "layer", 1, parts, { task: "cover", audio_cover_strength: actualCatalog.combination.audio_cover_strength, caption: piece.spec.ace!.caption });
+      const defaults = buildSpec("", "layer", 1, parts, { task: "cover", audio_cover_strength: actualCatalog.combination.audio_cover_strength });
       expect(pieces.get(specKey(defaults, actualCatalog))).toBe(piece.id);
       expect(legacyPieces.get(specKey(defaults, updatedCatalog))).toBe(piece.id);
       expect(pieces.get(specKey({ ...defaults, parts: [...defaults.parts].reverse() }, actualCatalog))).toBe(piece.id);
@@ -41,12 +41,21 @@ describe("precomputed playback lookup", () => {
     for (const piece of bundled.pieces) {
       const defaults = buildSpec("", "layer", 1, piece.spec.parts.map(part => draftFor(sources.get(part.source)!)),
         {task: "cover", audio_cover_strength: actualCatalog.combination.audio_cover_strength});
-      const key = specKey(defaults, actualCatalog);
+      const key = specKey(defaults, actualCatalog, "stable-audio-3-small");
       expect(earlier.get(key)).toBe(piece.id);
       expect(saved.has(key)).toBe(false);
     }
     expect(earlierPieces({...bundled, config_sha256: "changed"}, actualCatalog).size).toBe(0);
-    expect(earlierPieces(index, catalog).size).toBe(0); // Already uses the corrected prompt.
+    expect(earlierPieces(index, catalog).has(specKey(request, catalog))).toBe(false);
+  });
+
+  test("model-specific defaults separate prompts while explicit comparison captions share a key", () => {
+    expect(specKey(request, catalog, "base")).toBe(specKey(request, catalog, "turbo"));
+    expect(specKey(request, catalog, "stable-audio-3-small")).not.toBe(specKey(request, catalog, "base"));
+    const shared = {...request, ace: {...request.ace!, caption: "Shared comparison prompt"}};
+    expect(specKey(shared, catalog, "stable-audio-3-small")).toBe(specKey(shared, catalog, "base"));
+    expect(specKey({...request, ace: {...request.ace!, caption: ensembleCaption(request.parts, catalog)}}, catalog))
+      .toBe(specKey(request, catalog, "stable-audio-3-small"));
   });
 
   test("default requests find the saved pair in either click order", () => {

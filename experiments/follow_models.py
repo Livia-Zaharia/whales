@@ -43,6 +43,11 @@ def model_registry(path: Path = CONFIG) -> dict:
         raise ValueError("Music model ids must be unique lowercase names")
     if registry.get("default_model") not in ids or registry.get("primary_model") not in ids:
         raise ValueError("Default and primary music models must be configured")
+    profiles = registry.get("caption_profiles", {})
+    if not isinstance(profiles, dict) or any(not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", name)
+                                              or not isinstance(profile, str) or profile not in {"legacy", "instruments"}
+                                              for name, profile in profiles.items()):
+        raise ValueError("Caption profiles must select legacy or instruments for valid model ids")
     for model in models:
         if model.get("engine") not in {"ace-step", "stable-audio-3"} or not model.get("checkpoint"):
             raise ValueError(f"Unsupported music engine for {model['id']}")
