@@ -196,7 +196,8 @@ class CombineTests(unittest.TestCase):
         from experiments.data import read_json, write_json
         from experiments.follow_combine import combine
 
-        spec = {"parts": [{"source": "hb", "trim_s": [0, 4]}], "ace": {"task": "cover"}}
+        spec = {"parts": [{"source": "hb", "trim_s": [0, 4]}],
+                "ace": {"task": "cover", "caption": "Shared comparison prompt"}}
         calls = []
 
         def model(layout, config, jobs, jobs_path, results_path, *args):

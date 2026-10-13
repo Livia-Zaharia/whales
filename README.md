@@ -125,8 +125,8 @@ The model selector recommends **ACE-Step Base · Slow** for a full composition
 (50 steps and guidance controls) and **Stable Audio 3 Small Music · Fast** for a
 smaller eight-step model. **ACE-Step Turbo** is also available as a fast preview.
 Base is selected by default. The models receive the measured audio guide, duration
-and seed. ACE-Step Base and Turbo use the earlier ambient style caption; Stable
-Audio uses a caption naming the selected guide instruments and asking it to
+and seed. ACE-Step Base uses the earlier ambient style caption; Turbo and Stable
+Audio use a caption naming the selected guide instruments and asking them to
 preserve their timing and melodic contours. Each model can interpret the sound
 differently; Stable Audio's transformation controls differ from ACE-Step's.
 Custom captions remain editable and override those defaults. An explicit shared

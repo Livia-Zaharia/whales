@@ -39,13 +39,18 @@ class InstrumentPromptTests(unittest.TestCase):
                       self.config, self.prepared)
         self.assertNotEqual(legacy["id"], automatic["id"])
 
-    def test_ace_defaults_restore_the_earlier_caption_and_id(self):
+    def test_base_restores_the_earlier_caption_and_id(self):
         explicit = self.spec | {"ace": {"task": "cover", "caption": self.config["combination"]["caption"]}}
         expected = plan(explicit, self.config, self.prepared)
-        for model in ("base", "turbo"):
-            self.assertEqual(plan(self.spec, self.config, self.prepared, model_variant=model), expected)
-            solo = plan(self.spec | {"parts": [{"source": "bow"}]}, self.config, self.prepared, model_variant=model)
-            self.assertEqual(solo["ace"]["caption"], self.config["species"]["humpback"]["caption"])
+        self.assertEqual(plan(self.spec, self.config, self.prepared, model_variant="base"), expected)
+        solo = plan(self.spec | {"parts": [{"source": "bow"}]}, self.config, self.prepared, model_variant="base")
+        self.assertEqual(solo["ace"]["caption"], self.config["species"]["humpback"]["caption"])
+
+    def test_turbo_and_stable_share_the_instrument_focused_default(self):
+        turbo = plan(self.spec, self.config, self.prepared, model_variant="turbo")
+        stable = plan(self.spec, self.config, self.prepared, model_variant="stable-audio-3-small")
+        self.assertEqual(turbo, stable)
+        self.assertIn("featuring bells, horn, theremin.", turbo["ace"]["caption"])
 
     def test_shared_custom_captions_keep_the_same_id_across_models(self):
         spec = self.spec | {"ace": {"task": "cover", "caption": "The same explicit comparison prompt"}}

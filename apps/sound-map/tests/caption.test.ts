@@ -14,9 +14,9 @@ describe("selected-instrument prompts", () => {
     expect(isModelRegistry({...bundledModels, caption_profiles: {"../missing": "legacy"}})).toBe(false);
     expect(isModelRegistry({...bundledModels, models: bundledModels.models.filter(model => model.id !== "turbo")})).toBe(true);
   });
-  test("ACE retains the previous style prompt while Stable uses the selected instruments", () => {
+  test("only Base retains the style prompt; Turbo and Stable use selected instruments", () => {
     expect(defaultCaption(trio, catalog, "base")).toBe(catalog.combination.caption);
-    expect(defaultCaption(trio, catalog, "turbo")).toBe(catalog.combination.caption);
+    expect(defaultCaption(trio, catalog, "turbo")).toBe(ensembleCaption(trio, catalog));
     expect(defaultCaption(trio, catalog, "stable-audio-3-small")).toBe(ensembleCaption(trio, catalog));
     const solo = [draftFor(catalog.sources.find(source => source.species === "humpback")!)];
     expect(defaultCaption(solo, catalog, "base")).toBe(catalog.species.humpback.caption);

@@ -90,8 +90,8 @@ changes in their areas.
   changing display labels must not regenerate music. UI links include the model.
   Identical model requests share a job; different models use the shared queue.
 - **Composition prompts:** `music.caption_profiles` in `resources/orchestra-app.json`
-  chooses `legacy` (earlier species/ensemble style captions, default for ACE-Step)
-  or `instruments` (selected guide instruments, default for Stable Audio) per model.
+  chooses `legacy` (earlier species/ensemble style captions, default for Base)
+  or `instruments` (selected guide instruments, default for Turbo and Stable Audio) per model.
   The latter uses `music.caption_template` and `music.instrument_prompt_names`.
   Keep Python and frontend caption resolution identical; Base batches explicitly
   resolve the Base profile even when the app default is another model. Explicit

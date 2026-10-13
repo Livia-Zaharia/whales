@@ -50,7 +50,7 @@ describe("precomputed playback lookup", () => {
   });
 
   test("model-specific defaults separate prompts while explicit comparison captions share a key", () => {
-    expect(specKey(request, catalog, "base")).toBe(specKey(request, catalog, "turbo"));
+    expect(specKey(request, catalog, "stable-audio-3-small")).toBe(specKey(request, catalog, "turbo"));
     expect(specKey(request, catalog, "stable-audio-3-small")).not.toBe(specKey(request, catalog, "base"));
     const shared = {...request, ace: {...request.ace!, caption: "Shared comparison prompt"}};
     expect(specKey(shared, catalog, "stable-audio-3-small")).toBe(specKey(shared, catalog, "base"));

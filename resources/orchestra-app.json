@@ -4,7 +4,7 @@
     "primary_model": "base",
     "caption_profiles": {
       "base": "legacy",
-      "turbo": "legacy",
+      "turbo": "instruments",
       "stable-audio-3-small": "instruments"
     },
     "caption_template": "Slow, spacious ambient chamber music featuring {instruments}. Use only these instruments; preserve the guide's timing and melodic contours. Instrumental, no vocals.",
@@ -59,7 +59,7 @@
         "checkpoint": "acestep-v15-turbo",
         "steps": 8,
         "guidance_scale": 1.0,
-        "description": "Fast eight-step preview using the earlier ambient style prompt. Instruments and musical detail can differ from Base. Saved separately so you can compare the two.",
+        "description": "Fast eight-step preview using a prompt focused on the selected guide instruments. Instruments and musical detail can differ from Base. Saved separately so you can compare the two.",
         "characteristics": [
           "Fast preview"
         ],
