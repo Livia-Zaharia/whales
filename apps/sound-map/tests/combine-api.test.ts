@@ -40,7 +40,7 @@ if (spec.title === "fail") {
 }
 while (!(await Bun.file(root + "/allow-" + spec.parts[0].trim_s[1]).exists())) await Bun.sleep(20);
 const folder = root + "/data/output/follow/combos/" + spec.parts[0].trim_s[1];
-const manifest = folder + "/manifest.json";
+const manifest = folder + "/manifest" + (variant === "base" || variant === "recordings" ? "" : "-" + variant) + ".json";
 await Bun.write(manifest, JSON.stringify({ id: spec.title, title: spec.title, spec, ace: spec.ace ? {variant} : null }));
 unlinkSync(lock);
 console.log(manifest);

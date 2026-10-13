@@ -271,7 +271,7 @@ async function combine(request: Request): Promise<Response> {
       if (progress) send(progress);
       else if (readableLog(line) && !line.trim().startsWith("ERROR: ")) send({ type: "log", text: line.trim() });
     });
-    const manifestPath = tail.map((line) => line.trim()).filter((line) => line.endsWith("manifest.json")).at(-1);
+    const manifestPath = tail.map((line) => line.trim()).filter((line) => /(?:^|[\\/])manifest(?:-[a-z][a-z0-9-]{0,63})?\.json$/.test(line)).at(-1);
     if (code === 0 && manifestPath) {
       send({ type: "done", manifest: (await Bun.file(manifestPath).json()) as Manifest });
     } else {
