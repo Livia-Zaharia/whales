@@ -670,3 +670,24 @@ def precompute_duos_command(
     except ValueError as error:
         typer.echo(f"ERROR: {error}", err=True)
         raise typer.Exit(2) from error
+
+
+@app.command("precompute-trios")
+def precompute_trios_command(
+    data_dir: DataOption = DEFAULT_DATA,
+    source: SourcesOption = None,
+    ace_root: Annotated[Path | None, typer.Option(help="Local ACE-Step 1.5 checkout with its own .venv.")] = None,
+    offload: Annotated[bool, typer.Option(help="CPU offload between stages when GPU memory is limited.")] = False,
+    workers: Annotated[int, typer.Option(min=1, max=8, help="CPU workers preparing guides and playback files; GPU jobs stay sequential.")] = 4,
+    dry_run: Annotated[bool, typer.Option(help="Count finished and pending trios without writing files or loading the model.")] = False,
+):
+    """Batch every unordered map trio with local ACE-Step Base; load once and resume on rerun."""
+    from .follow_precompute import precompute_trios
+
+    try:
+        path = precompute_trios(Layout(data_dir), load_config(), source, ace_root, offload, workers, dry_run)
+        if path is not None:
+            typer.echo(path)
+    except (ValueError, subprocess.CalledProcessError) as error:
+        typer.echo(f"ERROR: {error}. Rerun the same command to resume the batch.", err=True)
+        raise typer.Exit(2) from error

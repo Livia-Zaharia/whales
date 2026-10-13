@@ -1,15 +1,27 @@
-"""Precompute unordered duos, loading ACE-Step once and preserving completed work on restart."""
+"""Precompute unordered ensembles, loading ACE-Step once and resuming interrupted batches.
+
+Preview or run every trio on the local GPU:
+    uv run --group audio main.py follow precompute-trios --dry-run
+    uv run --group audio main.py follow precompute-trios
+Repeat --source to select recordings; rerun the same command after interruption.
+"""
 
 from itertools import combinations
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+import shutil
+import subprocess
+import time
 
 from .data import Layout, now, read_json, write_json
-from .follow import directories, run_ace
+from .follow import ACE_DIR, RUNNER, directories, run_ace
 from .follow_combine import RENDER_VERSION, ace_job, catalog, combine, plan, prepared_sources, saved_render
+from .follow_models import generation_paths, model_fingerprint, music_model
 
 
-def duo_specs(config: dict, prepared: dict, only=None):
+def combination_specs(config: dict, prepared: dict, size: int, only=None):
+    if not 2 <= size <= config.get("combination", {}).get("max_parts", 8):
+        raise ValueError("Choose an ensemble size between 2 and the configured maximum")
     ids = {s["id"] for s in config["sources"] if s.get("map") is not False}
     if only:
         unknown = set(only) - ids
@@ -19,20 +31,90 @@ def duo_specs(config: dict, prepared: dict, only=None):
     missing = ids - prepared.keys()
     if missing:
         raise ValueError(f"Unprepared sources: {', '.join(sorted(missing))}; run 'main.py follow prepare' first")
-    if len(ids) < 2:
-        raise ValueError("Choose at least two prepared map sources")
+    if len(ids) < size:
+        minimum = "two" if size == 2 else str(size)
+        raise ValueError(f"Choose at least {minimum} prepared map sources")
     return [{"arrangement": "layer", "gap_s": 1,
-             "parts": [{"source": a, "offset_s": 0}, {"source": b, "offset_s": 0}], "ace": {"task": "cover"}}
-            for a, b in combinations(sorted(ids), 2)]
+             "parts": [{"source": source, "offset_s": 0} for source in ensemble], "ace": {"task": "cover"}}
+            for ensemble in combinations(sorted(ids), size)]
+
+
+def duo_specs(config: dict, prepared: dict, only=None):
+    return combination_specs(config, prepared, 2, only)
+
+
+def local_base_environment(layout: Layout, ace_root: Path | None):
+    ace_root = (ace_root or layout.interim / ACE_DIR).resolve()
+    python = ace_root / ".venv" / "bin" / "python"
+    if not python.exists():
+        raise ValueError(f"No ACE-Step environment at {ace_root}; run 'uv run start' to set it up")
+    return ace_root, python
+
+
+def run_local_base(layout, config, jobs, jobs_path, results_path, ace_root, offload):
+    """Keep all jobs in one local runner, regardless of the web app's HF/CPU settings."""
+    ace_root, python = local_base_environment(layout, ace_root)
+    write_json(jobs_path, {"ace_root": str(ace_root), "model": config["ace_step"]["model"], "device": "cuda",
+                           "offload": offload, "quantization": "int8_weight_only", "jobs": jobs,
+                           "main_repo": config["ace_step"].get("main_repo"),
+                           "model_repo": config["ace_step"].get("model_repo"),
+                           "main_revision": config["ace_step"].get("main_revision"),
+                           "model_revision": config["ace_step"].get("model_revision"),
+                           "results": str(results_path.resolve())})
+    print(f"ACE-Step Base: one local GPU model load for {len(jobs)} music jobs", flush=True)
+    started = time.perf_counter()
+    subprocess.run([str(python), str(RUNNER), str(jobs_path.resolve())], cwd=ace_root, check=True)
+    print(f"ACE-Step: {len(jobs)} jobs in {time.perf_counter() - started:.0f} s", flush=True)
+    return read_json(results_path)
 
 
 def render_piece(args):
     layout, config, spec, finalize = args
     if finalize:
         folder = directories(layout)[1] / "combos" / plan(spec, config, prepared_sources(layout))["id"]
-        if not (folder / "ace.wav").exists():
+        combo = plan(spec, config, prepared_sources(layout))
+        paths = generation_paths(folder, combo["ace"]["seed"], "base", music_model("base"))
+        if not paths["wav"].exists() or not paths["results"].exists():
             raise ValueError(f"Missing generated music in {folder}; rerun the batch to resume")
-    return combine(layout, config, spec, run_model=finalize)
+    return combine(layout, config, spec, run_model=finalize, model_variant="base")
+
+
+def matching_base_job(results: dict, expected: dict, checkpoint: str):
+    """Accept cached music only when its model and effective generation settings match."""
+    if results.get("model", checkpoint) != checkpoint:
+        return None
+    job = results.get("jobs", {}).get(expected["id"])
+    keys = ("task", "track", "caption", "duration", "seed", "audio_cover_strength", "inference_steps", "guidance_scale")
+    if job is None or job.get("model", checkpoint) != checkpoint or job.get("variant", "base") != "base":
+        return None
+    if any(job.get(key) != expected[key] for key in keys):
+        return None
+    return job
+
+
+def restore_base_audio(paths: dict, job: dict, checkpoint: str, previous: dict, legacy_previous: dict):
+    """Restore interrupted jobs and copy legacy Base audio without removing old playback files."""
+    own_results = paths["results"]
+    if paths["wav"].exists():
+        if own_results.exists() and matching_base_job(read_json(own_results), job, checkpoint):
+            return True
+        cached = matching_base_job(previous, job, checkpoint)
+        if cached is not None:
+            write_json(own_results, previous | {"jobs": {job["id"]: cached | {"output": job["output"]}}})
+            return True
+    folder = paths["wav"].parent
+    legacy_wav, legacy_results = folder / "ace.wav", folder / "ace-results.json"
+    if not legacy_wav.exists():
+        return False
+    old = read_json(legacy_results) if legacy_results.exists() else legacy_previous
+    cached = matching_base_job(old, job, checkpoint)
+    if cached is None:
+        return False
+    if not legacy_results.exists():
+        write_json(legacy_results, old | {"jobs": {job["id"]: cached}})
+    shutil.copy2(legacy_wav, paths["wav"])
+    write_json(own_results, old | {"jobs": {job["id"]: cached | {"output": job["output"]}}})
+    return True
 
 
 def render_pieces(layout, config, specs, finalize, workers):
@@ -45,38 +127,67 @@ def render_pieces(layout, config, specs, finalize, workers):
 
 
 def precompute_duos(layout: Layout, config: dict, only=None, ace_root: Path | None = None, offload: bool = False, workers: int = 1):
+    return precompute_combinations(layout, config, 2, only, ace_root, offload, workers)
+
+
+def precompute_trios(layout: Layout, config: dict, only=None, ace_root: Path | None = None, offload: bool = False,
+                     workers: int = 4, dry_run: bool = False):
+    return precompute_combinations(layout, config, 3, only, ace_root, offload, workers, local=True, dry_run=dry_run)
+
+
+def precompute_combinations(layout: Layout, config: dict, size: int, only=None, ace_root: Path | None = None,
+                            offload: bool = False, workers: int = 1, *, local: bool = False, dry_run: bool = False):
+    if workers < 1:
+        raise ValueError("Choose at least one CPU worker")
     interim, output = directories(layout)
     prepared = prepared_sources(layout)
-    specs = duo_specs(config, prepared, only)
+    specs = combination_specs(config, prepared, size, only)
     combos = [plan(spec, config, prepared) for spec in specs]
-    results_path = interim / "duos-ace-results.json"
+    model = music_model("base")
+    if model["engine"] != "ace-step":
+        raise ValueError("The Base batch requires an ACE-Step model in the music registry")
+    model_config = config | {"ace_step": config["ace_step"] | {
+        "model": model["checkpoint"], "inference_steps": model["steps"], "guidance_scale": model["guidance_scale"],
+    }}
+    label = "duos" if size == 2 else "trios" if size == 3 else f"ensembles-{size}"
+    batch_paths = generation_paths(interim / "batches" / label, config["seed"], "base", model)
+    results_path = batch_paths["results"]
     previous = read_json(results_path) if results_path.exists() else {"jobs": {}}
+    legacy_results = interim / f"{label}-ace-results.json"
+    legacy_previous = read_json(legacy_results) if legacy_results.exists() else {"jobs": {}}
     jobs = []
+    own_results = {}
     unfinished = [(spec, combo) for spec, combo in zip(specs, combos)
-                  if not saved_render(output / "combos" / combo["id"], output, needs_ace=True)]
-    print(f"Precomputing {len(specs)} duos; both players start at 0 s, seed {config['seed']}", flush=True)
+                  if not saved_render(output / "combos" / combo["id"], output, needs_ace=True, model_variant="base")]
+    print(f"{len(specs)} {label}: {len(specs) - len(unfinished)} finished, {len(unfinished)} pending; "
+          f"all players start at 0 s, seed {config['seed']}", flush=True)
+    if dry_run:
+        print("Dry run: no files written or model loaded", flush=True)
+        return None
+    if local and unfinished:
+        local_base_environment(layout, ace_root)
     pending_specs = [spec for spec, _ in unfinished]
     for index, (_, (_, combo)) in enumerate(zip(render_pieces(layout, config, pending_specs, False, workers), unfinished), 1):
         folder = output / "combos" / combo["id"]
-        job = ace_job(combo, config, folder)
-        own_results = folder / "ace-results.json"
-        # A stopped batch already saves timings after each job. Restore them before resuming.
-        if (folder / "ace.wav").exists() and not own_results.exists() and job["id"] in previous["jobs"]:
-            write_json(own_results, {**previous, "jobs": {job["id"]: previous["jobs"][job["id"]]}})
-        if not (folder / "ace.wav").exists() or not own_results.exists():
+        paths = generation_paths(folder, combo["ace"]["seed"], "base", model)
+        job = ace_job(combo, model_config, folder) | {"output": str(paths["wav"].resolve())}
+        own_results[job["id"]] = paths["results"]
+        if not restore_base_audio(paths, job, model["checkpoint"], previous, legacy_previous):
             jobs.append(job)
         if index % 10 == 0 or index == len(unfinished):
             print(f"Guides ready: {index}/{len(unfinished)}; {len(jobs)} music jobs pending", flush=True)
     if jobs:
-        results = run_ace(layout, config, jobs, interim / "duos-ace-jobs.json", results_path, ace_root, offload)
+        runner = run_local_base if local else run_ace
+        results = runner(layout, model_config, jobs, batch_paths["jobs"], results_path, ace_root, offload)
         for job in jobs:
-            write_json(Path(job["output"]).parent / "ace-results.json", {**results, "jobs": {job["id"]: results["jobs"][job["id"]]}})
+            write_json(own_results[job["id"]], {**results, "jobs": {job["id"]: results["jobs"][job["id"]]}})
     for index, _ in enumerate(render_pieces(layout, config, pending_specs, True, workers), 1):
         if index % 10 == 0 or index == len(unfinished):
             print(f"Playback files ready: {index}/{len(unfinished)}", flush=True)
     catalog(layout, config)
-    index_path = output / "duos.json"
+    index_path = output / f"{label}.json"
     write_json(index_path, {"created_at_utc": now(), "config_sha256": config["config_sha256"], "render_version": RENDER_VERSION,
+                            "model_id": "base", "model_config_sha256": model_fingerprint(model),
                             "pieces": [{"id": c["id"], "spec": c} for c in combos]})
-    print(f"All {len(combos)} duos ready → {index_path}", flush=True)
+    print(f"All {len(combos)} {label} ready → {index_path}", flush=True)
     return index_path
