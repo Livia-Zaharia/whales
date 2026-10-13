@@ -770,6 +770,7 @@ if (!isStatic) setInterval(() => { if (busy) renderCompositionProgress(); }, 100
 /* ---------- result and playback ---------- */
 function showResult(manifest: Manifest | null, options: { seat: boolean; autoplay?: boolean; scroll?: boolean }) {
   if (!manifest) return;
+  compositionError = "";
   stop();
   player.rewind();
   result = manifest;
