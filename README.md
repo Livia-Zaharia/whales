@@ -20,8 +20,9 @@ then hear one piece composed from all of them. Every player is a real recording:
 humpback song from Haro Strait, killer-whale calls from the Salish Sea and Alaska,
 sperm-whale codas from Dominica and bottlenose dolphin whistles from Eilat. Audio
 analysis measures each call's onset and pitch contour. A guide plays those
-measurements in an instrument and register per species, and ACE-Step 1.5, a
-generative music model, composes the piece from the combined guide. While it
+measurements in an instrument and register per species, and a
+selected model—ACE-Step 1.5 or Stable Audio 3 Small Music—composes the piece from
+the combined guide. While it
 plays, every site pulses on its own calls, and spectrograms show what the analysis
 measured and what the model made.
 
@@ -34,7 +35,7 @@ prototype for the HIFMB × HWK [ArtWaves residency](https://hifmb.de/transfer/ar
 
 | 1 · Recorded | 2 · Measured | 3 · Guide | 4 · Generated |
 |---|---|---|---|
-| Short hydrophone excerpts from NOAA's DCLDE workshops and AWI's polar moorings | Onsets, durations, click groups and pitch contours, from signal analysis | Each species plays its measurements on its own instrument and register | ACE-Step 1.5 composes one piece from the combined guide |
+| Short hydrophone excerpts from NOAA's DCLDE workshops and AWI's polar moorings | Onsets, durations, click groups and pitch contours, from signal analysis | Each species plays its measurements on its own instrument and register | ACE-Step 1.5 or Stable Audio 3 Small Music composes from the combined guide |
 
 <table>
   <tr>
@@ -111,7 +112,7 @@ ACE-Step automatically uses CUDA when available and falls back to CPU otherwise.
 For a CPU-only installation, run `uv run start --ace yes` (or set
 `ORCHESTRA_ACE=yes`). This installs CPU PyTorch and the inference dependencies in
 ACE-Step's own environment. Only the selected music model, VAE and text encoder
-are downloaded (about 6 GB); the unused LM and turbo model are skipped.
+are downloaded (about 6 GB); the unused LM is skipped, and Turbo downloads only when selected.
 CPU generation needs sufficient RAM for the model and takes
 longer. CPU jobs have a two-hour generation limit by default; override it in
 `.env` with `ACESTEP_GENERATION_TIMEOUT` (seconds). CUDA keeps ACE-Step's default
@@ -120,12 +121,30 @@ immediately on either kind of server. Compose shows
 an activity bar and the engine's current stage, with a CPU notice only when the
 server detects no CUDA.
 
-Choose **Base** for a full composition (50 steps and guidance controls) or
-**Turbo** for an eight-step preview. The models can choose different instruments
-and musical detail. Base remains the default. A Base render replaces the saved
-Turbo result for the same ensemble; later Turbo requests reuse that Base result.
-Existing listeners can finish playing the earlier Turbo audio during an upgrade.
-The command-line equivalent is `main.py follow combine SPEC --model-variant turbo`.
+The model selector recommends **ACE-Step Base · Slow** for a full composition
+(50 steps and guidance controls) and **Stable Audio 3 Small Music · Fast** for a
+smaller eight-step model. **ACE-Step Turbo** is also available as a fast preview.
+Base is selected by default. The models receive the same measured audio guide,
+caption, duration and seed, but can choose different instruments and musical
+detail; Stable Audio's transformation controls differ from ACE-Step's.
+
+App settings live in `resources/orchestra-app.json`. Its `music` section configures
+the enabled model list, default and primary model, recommendations, characteristics
+such as “Slow” and “Fast”, explanatory text, checkpoints and generation settings.
+Edit this file to change the selector; the server supplies it to the frontend.
+Every model keeps separate audio and manifests for the same ensemble and seed.
+Filenames include `generated-SEED-MODEL-SETTINGS_HASH`, and selecting a model opens
+its saved version or generates it when missing. The main saved piece stays Base
+once a Base result exists; other versions and their links remain available.
+Use `main.py follow combine SPEC --model-variant stable-audio-3-small` (or `base`
+or `turbo`) on the command line.
+
+Stable Audio runs in its own environment, separate from ACE-Step. Enable access
+to [Stable Audio 3 Small Music](https://huggingface.co/stabilityai/stable-audio-3-small-music)
+for the Hugging Face account whose `HF_TOKEN` is in `.env`, then install with
+`uv run main.py follow setup-models` on CUDA or
+`uv run main.py follow setup-models --cpu` on a CPU server. The first generation
+downloads and loads its weights; following generations reuse downloaded files.
 On a shared CPU server, set `OMP_NUM_THREADS` and `MKL_NUM_THREADS` to the desired
 compute-thread count. OpenMP binding can reserve a core for other services: on an
 eight-core host, seven threads with `OMP_PROC_BIND=close` and
@@ -152,14 +171,14 @@ and `follow prepare` commands.
 - **Compose.** The dock at the bottom shows who is seated. Remove a player with ×,
   choose layered or sequenced, then press **Compose piece**. After any change the
   button becomes **Update piece**; **New take** keeps the players and asks
-  ACE-Step for another seed. Ctrl+Enter does the same as the button.
+  the selected model for another seed. Ctrl+Enter does the same as the button.
 - **Keep what you like.** Naming waits until you want to keep a piece: **Save
   preset** under the result. Presets and recent pieces are listed at the bottom,
   and opening one seats its players so you can change it and update.
 
 The individual steps behind `uv run start` are listed in
-[apps/sound-map/README.md](apps/sound-map/README.md#run). An orchestra holds up to six players (`combination.max_parts` in
-`resources/follow-music.json`). Without ACE-Step a piece still renders its guide
+[apps/sound-map/README.md](apps/sound-map/README.md#run). An orchestra holds up to eight players (`combination.max_parts` in
+`resources/follow-music.json`). Without a generation model a piece still renders its guide
 and a deterministic response. The method, the measurements and the tests of
 whether the music follows the animals are in [Follow the phrase](docs/follow-the-phrase.md);
 the app is described in [apps/sound-map/README.md](apps/sound-map/README.md).

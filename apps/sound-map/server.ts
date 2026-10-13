@@ -12,7 +12,7 @@ import { contentType, readableLog, safeJoin } from "./src/lib/paths.ts";
 import { SILVER_AUDIO_METHODS } from "./src/lib/silver-audio.ts";
 import { SILVER_AUDIO_RUNTIME } from "./src/lib/silver-performance.ts";
 import type { Catalog, ComboSummary, GenerationRuntime, Manifest, Spec } from "./src/lib/types.ts";
-import { renderedModel } from "./src/lib/model-variant.ts";
+import { bundledModels, isModelRegistry, modelMatches, modelSettings, renderedModel } from "./src/lib/model-variant.ts";
 
 declare const WHALES_BUILD_ROOT: string; // replaced by the production build
 const ROOT = resolve(process.env.WHALES_ROOT ?? (typeof WHALES_BUILD_ROOT === "string" ? WHALES_BUILD_ROOT : join(import.meta.dir, "..", "..")));
@@ -156,14 +156,50 @@ async function combos(): Promise<Response> {
   return Response.json(out);
 }
 
-async function combo(id: string): Promise<Response> {
+async function musicModels() {
+  const config = await Bun.file(join(ROOT, "resources", "orchestra-app.json")).json().catch(() => null);
+  if (config && !isModelRegistry(config.music)) throw new Error("The music model configuration is invalid");
+  const registry = config?.music ?? bundledModels;
+  return { ...registry, models: registry.models.map((m: typeof bundledModels.models[number]) => ({...m,
+    fingerprint:new Bun.CryptoHasher("sha256").update(modelSettings(m)).digest("hex"),
+  })) };
+}
+
+async function models(): Promise<Response> {
+  try {
+    const registry = await musicModels();
+    const runtime = await (await generationRuntime()).json() as GenerationRuntime;
+    const stablePython = join(ROOT, "data", "interim", "tools", "Stable-Audio-3", ".venv", "bin", "python");
+    let stableDevice: "cuda" | "cpu" | null = null;
+    if (await Bun.file(stablePython).exists()) {
+      try {
+        const probe=Bun.spawn([stablePython,join(ROOT,"experiments","follow_stable.py"),"--runtime"],{cwd:ROOT,stdout:"pipe",stderr:"ignore",timeout:8_000});
+        const output=await new Response(probe.stdout).text();
+        if (await probe.exited===0) stableDevice=JSON.parse(output).device;
+      } catch { /* The UI shows an unavailable model instead of a broken environment. */ }
+    }
+    return Response.json({ ...registry, models: registry.models.map((m: typeof bundledModels.models[number]) => ({
+      ...m, available: runtime.python_available && (m.engine === "stable-audio-3" ? Boolean(stableDevice) : runtime.ace_available),
+      device:m.engine === "stable-audio-3" ? stableDevice : runtime.device,
+    })) }, { headers: { "cache-control": "no-store" } });
+  } catch { return Response.json({ error: "The music model configuration could not load." }, { status: 503 }); }
+}
+
+async function combo(id: string, request?: Request): Promise<Response> {
   if (!/^[0-9a-f]{12}$/.test(id)) return Response.json({ error: "Unknown combination" }, { status: 404 });
+  const selected = request ? new URL(request.url).searchParams.get("model") : null;
+  const registry = await musicModels();
+  if (selected && !registry.models.some((m: typeof bundledModels.models[number]) => m.id === selected)) return Response.json({ error: "Unknown music model" }, { status: 400 });
   for (const root of [OUTPUT, DEMO]) {
-    const file = Bun.file(join(root, "combos", id, "manifest.json"));
-    if (!(await file.exists())) continue;
-    const manifest = (await file.json()) as Manifest;
-    const preset = (await readPresets())[id];
-    return Response.json(preset ? { ...manifest, title: preset.name, preset: true } : manifest);
+    const names = selected ? [`manifest-${selected}.json`, "manifest.json"] : ["manifest.json"];
+    for (const name of names) {
+      const file = Bun.file(join(root, "combos", id, name));
+      if (!(await file.exists())) continue;
+      const manifest = (await file.json()) as Manifest;
+      if (selected && !modelMatches(manifest, registry.models.find((m: typeof bundledModels.models[number]) => m.id === selected)!)) continue;
+      const preset = (await readPresets())[id];
+      return Response.json(preset ? { ...manifest, title: preset.name, preset: true } : manifest);
+    }
   }
   return Response.json({ error: "Unknown combination" }, { status: 404 });
 }
@@ -194,13 +230,15 @@ async function combine(request: Request): Promise<Response> {
   }
   const url = new URL(request.url);
   const requested = url.searchParams.get("model");
-  if (requested !== null && !["0", "1", "base", "turbo"].includes(requested)) {
-    return Response.json({ error: "Choose the Base or Turbo music model." }, { status: 400 });
+  const registry = await musicModels();
+  const variant = requested && !["0", "1"].includes(requested) ? requested : registry.default_model;
+  const selected = registry.models.find((m: typeof bundledModels.models[number]) => m.id === variant);
+  if (!selected) {
+    return Response.json({ error: "Choose one of the configured music models." }, { status: 400 });
   }
   const model = requested !== "0" && Boolean(spec.ace);
-  const variant = requested === "turbo" ? "turbo" : "base";
-  if (model && variant === "turbo" && spec.ace?.task === "lego") {
-    return Response.json({ error: "Choose Base for adding a track. Turbo supports cover composition." }, { status: 400 });
+  if (model && variant !== "base" && spec.ace?.task === "lego") {
+    return Response.json({ error: "Choose Base for adding a track. This model supports cover composition." }, { status: 400 });
   }
   let key: string;
   try {
@@ -211,20 +249,17 @@ async function combine(request: Request): Promise<Response> {
   } catch {
     return Response.json({ error: "The combination settings could not be read. Choose recordings and try again." }, { status: 400 });
   }
-  // Base requests upgrade Turbo instead of joining its lower-step render. A
-  // Turbo request can join Base already in progress, so it cannot downgrade it.
-  const pending = model && variant === "turbo" ? compositions.pending(key + ":base") || compositions.pending(key + ":turbo")
-    : compositions.pending(key + (model ? ":base" : ":recordings"));
+  const jobKey = key + (model ? `:${variant}:${selected.fingerprint}` : ":recordings");
+  const pending = compositions.pending(jobKey);
   if (pending) return compositionStream(pending);
   const runtime = await (await generationRuntime()).json() as GenerationRuntime;
   if (!runtime.python_available) return Response.json({ error: "The Python composition engine is unavailable. Recordings and saved pieces still play." }, { status: 503 });
-  if (model && variant === "turbo") {
-    const preferred = compositions.pending(key + ":base");
-    if (preferred) return compositionStream(preferred);
+  if (model && selected.engine === "stable-audio-3" && !(await Bun.file(join(ROOT, "data", "interim", "tools", "Stable-Audio-3", ".venv", "bin", "python")).exists())) {
+    return Response.json({ error: "Stable Audio is not installed on this server. Choose another model." }, { status: 503 });
   }
 
   // Reserve synchronously after the runtime probe. Different jobs queue; matching jobs join.
-  const job = compositions.start(key + (model ? `:${variant}` : ":recordings"), spec, async (send, id) => {
+  const job = compositions.start(jobKey, spec, async (send, id) => {
     await mkdir(SPECS, { recursive: true });
     const specPath = join(SPECS, `${id}.json`);
     await Bun.write(specPath, JSON.stringify(spec, null, 2));
@@ -368,7 +403,8 @@ const server = Bun.serve({
     "/api/catalog": { GET: catalog },
     "/api/runtime": { GET: generationRuntime },
     "/api/combos": { GET: combos },
-    "/api/combos/:id": { GET: (request) => combo(request.params.id) },
+    "/api/models": { GET: models },
+    "/api/combos/:id": { GET: (request) => combo(request.params.id, request) },
     "/api/combos/:id/preset": { POST: (request) => savePreset(request, request.params.id) },
     "/api/combine": { POST: combine, GET: () => Response.json({ job: compositions.active?.info ?? null }, { headers: { "cache-control": "no-store" } }) },
     "/api/combine/:id": { GET: (request) => reconnectComposition(request.params.id) },

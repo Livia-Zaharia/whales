@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readComposition } from "../src/lib/combine-reader.ts";
+import { bundledModels } from "../src/lib/model-variant.ts";
 import type { Catalog, CombineMessage, CompositionJob, Spec } from "../src/lib/types.ts";
 
 test("HTTP requests share matching jobs, queue different inputs, reconnect, and return the correct outcomes", async () => {
@@ -18,6 +19,8 @@ test("HTTP requests share matching jobs, queue different inputs, reconnect, and 
     const python = join(root, ".venv", "bin", "python");
     await Bun.write(python, "#!/bin/sh\nexit 0\n");
     await chmod(python, 0o755);
+    const stablePython = join(root,"data","interim","tools","Stable-Audio-3",".venv","bin","python");
+    await Bun.write(stablePython,"# installed model environment");
     const uv = join(bin, "uv");
     await Bun.write(uv, `#!${process.execPath}
 import { appendFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -61,6 +64,9 @@ console.log(manifest);
     expect(unchanged.status).toBe(304);
     expect(await unchanged.text()).toBe("");
     const source = catalog.sources[0]!;
+    const choices = await (await fetch(`${url}api/models`)).json();
+    expect(choices.default_model).toBe("base");
+    expect(choices.models.filter((m: {recommended: boolean}) => m.recommended).map((m: {id:string}) => m.id)).toEqual(["base","stable-audio-3-small"]);
     const spec = (end: number, title: string): Spec => ({ title, arrangement: "layer", gap_s: 1, ace: null,
       parts: [{ source: source.id, trim_s: [0, end], offset_s: 0, gain_db: 0, shift_octaves: null }] });
     const post = (body: Spec) => fetch(`${url}api/combine?model=0`, { method: "POST", body: JSON.stringify(body) });
@@ -116,20 +122,37 @@ console.log(manifest);
     const withModel = (model: string) => fetch(`${url}api/combine?model=${model}`, { method: "POST", body: JSON.stringify(modelSpec) });
     const turbo = await readerFor(await withModel("turbo"));
     const base = await readerFor(await withModel("base"));
+    const stable = await readerFor(await withModel("stable-audio-3-small"));
     const preferred = await readerFor(await withModel("turbo"));
     expect(turbo.job.model).toBe("turbo");
     expect(base.job.model).toBe("base");
     expect(base.job.id).not.toBe(turbo.job.id);
     expect(base.job.state).toBe("queued");
-    expect(preferred.job.id).toBe(base.job.id);
+    expect(stable.job.model).toBe("stable-audio-3-small");
+    expect(stable.job.queue_position).toBe(2);
+    expect(preferred.job.id).toBe(turbo.job.id);
     await preferred.reader.cancel();
     await Bun.write(join(root, "allow-11"), "go");
     do { terminal = await turbo.next(); } while (terminal.type !== "done" && terminal.type !== "error");
     expect(terminal).toMatchObject({ type: "done", manifest: { ace: { variant: "turbo" } } });
     do { terminal = await base.next(); } while (terminal.type !== "done" && terminal.type !== "error");
     expect(terminal).toMatchObject({ type: "done", manifest: { ace: { variant: "base" } } });
+    do { terminal = await stable.next(); } while (terminal.type !== "done" && terminal.type !== "error");
+    expect(terminal).toMatchObject({ type:"done",manifest:{ace:{variant:"stable-audio-3-small"}}});
+    await stable.reader.cancel();
     await turbo.reader.cancel(); await base.reader.cancel();
     expect((await withModel("unknown")).status).toBe(400);
+    const pieceId="0123456789ab";
+    const fixture=(model:string) => ({id:pieceId,title:model,parts:[],stems:{ace:{audio:model+".mp3"}},ace:{variant:model}});
+    await Bun.write(join(output,"combos",pieceId,"manifest.json"),JSON.stringify(fixture("base")));
+    await Bun.write(join(output,"combos",pieceId,"manifest-stable-audio-3-small.json"),JSON.stringify(fixture("stable-audio-3-small")));
+    expect((await (await fetch(`${url}api/combos/${pieceId}`)).json()).title).toBe("base");
+    expect((await (await fetch(`${url}api/combos/${pieceId}?model=stable-audio-3-small`)).json()).title).toBe("stable-audio-3-small");
+    expect((await fetch(`${url}api/combos/${pieceId}?model=turbo`)).status).toBe(404);
+    const updated={...bundledModels,models:bundledModels.models.filter(m=>m.id!=="turbo").map(m=>({...m,characteristics:["Custom speed"]}))};
+    await Bun.write(join(root,"resources","orchestra-app.json"),JSON.stringify({music:updated}));
+    expect((await (await fetch(`${url}api/models`)).json()).models[0].characteristics).toEqual(["Custom speed"]);
+    expect((await withModel("turbo")).status).toBe(400);
     expect((await fetch(`${url}api/combine/missing`)).status).toBe(404);
     expect((await fetch(`${url}api/combine`, { method: "POST", body: "broken" })).status).toBe(400);
   } finally {

@@ -13,7 +13,6 @@ output's own guide against swapped and perturbed guides, never by a global
 style score. Pleasing music is not evidence of what a whale would prefer.
 """
 
-from enum import Enum
 import math
 from pathlib import Path
 import shutil
@@ -29,11 +28,6 @@ from .data import DEFAULT_DATA, Layout, ROOT, digest, get_json, now, read_json, 
 from .follow_dataset import app as dataset_app, preparation_hash
 
 CONFIG = ROOT / "resources" / "follow-music.json"
-
-
-class AceModel(str, Enum):
-    base = "base"
-    turbo = "turbo"
 
 
 RUNNER = Path(__file__).with_name("follow_ace.py")
@@ -607,6 +601,16 @@ def catalog_command(data_dir: DataOption = DEFAULT_DATA):
     print(catalog(Layout(data_dir), load_config()))
 
 
+@app.command("setup-models")
+def setup_models_command(
+    data_dir: DataOption = DEFAULT_DATA,
+    cpu: Annotated[bool, typer.Option(help="Install CPU PyTorch for Stable Audio on a server without CUDA.")] = False,
+):
+    """Install the isolated Stable Audio environment; ACE-Step is set up by uv run start."""
+    from .follow_models import setup_stable
+    print(setup_stable(Layout(data_dir), cpu=cpu))
+
+
 @app.command("combine")
 def combine_command(
     spec: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="Combination spec JSON (sources, arrangement, trims, gains, optional ACE-Step).")],
@@ -615,7 +619,7 @@ def combine_command(
     ace_root: Annotated[Path | None, typer.Option(help="ACE-Step 1.5 checkout with its own .venv.")] = None,
     offload: Annotated[bool, typer.Option(help="CPU offload between stages; needed when other jobs share the GPU.")] = False,
     rerender: Annotated[bool, typer.Option(help="Render again even when a complete render of this combination exists.")] = False,
-    model_variant: Annotated[AceModel, typer.Option(help="Base for full composition; Turbo for an eight-step preview. Base replaces an earlier Turbo result.")] = AceModel.base,
+    model_variant: Annotated[str | None, typer.Option(help="Music model id from resources/orchestra-app.json; defaults to its configured model.")] = None,
 ):
     """Combine several sources into one guide, response and optional ACE-Step cover; prints the manifest path last."""
     import json
@@ -625,7 +629,7 @@ def combine_command(
 
     try:
         print(combine(Layout(data_dir), load_config(), json.loads(spec.read_text(encoding="utf-8")), ace_root, model, offload,
-                      reuse=not rerender, model_variant=model_variant.value))
+                      reuse=not rerender, model_variant=model_variant))
     except ValueError as error:  # one plain line, so the sound map can show it as is
         print(f"ERROR: {error}", file=sys.stderr)
         raise typer.Exit(2) from error

@@ -109,7 +109,7 @@ export class Composer {
 
   /** Seat a saved piece's players with its settings, so updating starts from it. */
   load(manifest: Manifest) {
-    this.loadSpec({ ...manifest.spec, ace: manifest.ace ? manifest.spec.ace : null });
+    this.loadSpec({ ...manifest.spec, ace: manifest.stems.ace ? manifest.spec.ace : null });
   }
 
   /** Restore the inputs of a queued or running composition after a reload. */

@@ -84,7 +84,29 @@ export interface PartDraft {
   shift_octaves: number | null;
 }
 
-export type ModelVariant = "base" | "turbo";
+export type ModelVariant = string;
+
+export interface MusicModel {
+  id: string;
+  label: string;
+  engine: "ace-step" | "stable-audio-3";
+  checkpoint: string;
+  steps: number;
+  guidance_scale: number;
+  description: string;
+  characteristics: string[];
+  recommended?: boolean;
+  max_duration_s?: number;
+  available?: boolean;
+  fingerprint?: string;
+  device?: "cuda" | "cpu" | "hf" | null;
+}
+
+export interface ModelRegistry {
+  default_model: string;
+  primary_model: string;
+  models: MusicModel[];
+}
 
 export interface AceRequest {
   task: "cover" | "lego";
@@ -152,7 +174,8 @@ export interface Manifest {
   parts: ManifestPart[];
   stems: Partial<Record<StemName, Listening>>;
   scores: Partial<Record<"response" | "ace", OutputScores>>;
-  ace: { caption: string; seed: number; task: string; seconds: number; audio_cover_strength: number; model?: string; variant?: ModelVariant } | null;
+  ace: { caption: string; seed: number; task: string; seconds: number; audio_cover_strength: number; model?: string; variant?: ModelVariant; inference_steps?: number; guidance_scale?: number } | null;
+  generation?: { model_id: string; engine: string; label: string; model_config_sha256: string; result: Record<string, unknown> } | null;
   interpretation: string;
   preset?: boolean; // set by the server when the user named this piece
 }

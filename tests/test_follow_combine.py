@@ -191,7 +191,7 @@ class CombineTests(unittest.TestCase):
         from experiments.follow_combine import RENDER_VERSION
         self.assertEqual(read_json(first)["render_version"], RENDER_VERSION)  # renders from older code are rebuilt
 
-    def test_turbo_is_upgraded_by_base_and_cannot_replace_it_afterward(self):
+    def test_base_and_turbo_keep_separate_results_for_the_same_ensemble_and_seed(self):
         from unittest.mock import patch
         from experiments.data import read_json, write_json
         from experiments.follow_combine import combine
@@ -210,13 +210,16 @@ class CombineTests(unittest.TestCase):
             turbo = read_json(path)
             turbo_audio = self.layout.output / "follow" / turbo["stems"]["ace"]["audio"]
             self.assertEqual(turbo["ace"]["variant"], "turbo")
-            self.assertEqual(combine(self.layout, self.config, spec, model_variant="base"), path)
-            base = read_json(path)
+            base_path = combine(self.layout, self.config, spec, model_variant="base")
+            base = read_json(base_path)
+            self.assertEqual(base["id"], turbo["id"])
+            self.assertEqual(base["spec"]["ace"]["seed"], turbo["spec"]["ace"]["seed"])
             self.assertEqual(base["ace"]["variant"], "base")
             self.assertNotEqual(base["stems"]["ace"]["audio"], turbo["stems"]["ace"]["audio"])
             self.assertTrue(turbo_audio.exists())  # An existing listener keeps its audio URL.
             self.assertEqual(combine(self.layout, self.config, spec, model_variant="turbo"), path)
-            self.assertEqual(read_json(path), base)
+            self.assertEqual(read_json(path), turbo)
+            self.assertEqual(read_json(base_path), base)  # Base remains the primary result.
         self.assertEqual(calls, [("acestep-v15-turbo", 8, 1.0), ("acestep-v15-base", 50, 7.0)])
 
     def test_failed_base_upgrade_preserves_the_finished_turbo_piece(self):
@@ -239,6 +242,46 @@ class CombineTests(unittest.TestCase):
                 combine(self.layout, self.config, spec, model_variant="base")
         self.assertEqual(read_json(path), original)
         self.assertEqual(combine(self.layout, self.config, spec, model_variant="turbo"), path)
+
+    def test_stable_keeps_its_own_result_and_settings_changes_preserve_previous_audio(self):
+        import copy
+        from unittest.mock import patch
+        from experiments.data import read_json, write_json
+        from experiments.follow_combine import combine
+        from experiments.follow_models import model_registry
+
+        spec = {"parts": [{"source": "hb", "trim_s": [0, 4]}], "ace": {"task": "cover", "seed": 123}}
+        registry = copy.deepcopy(model_registry())
+        calls = []
+        def render(job, results_path):
+            shutil.copyfile(job["src_audio"], job["output"])
+            write_json(results_path, {"jobs": {job["id"]: job | {"seconds": 1}}})
+        def ace(layout, config, jobs, jobs_path, results_path, *args):
+            render(jobs[0], results_path)
+        def stable(layout, model, job, jobs_path, results_path):
+            calls.append(model["steps"])
+            render(job, results_path)
+        with patch("experiments.follow_combine.model_registry", return_value=registry), patch("experiments.follow_combine.run_ace", side_effect=ace), patch("experiments.follow_combine.run_stable", side_effect=stable):
+            primary = combine(self.layout, self.config, spec, model_variant="base")
+            base = read_json(primary)
+            specific = combine(self.layout, self.config, spec, model_variant="stable-audio-3-small")
+            first = read_json(specific)
+            self.assertIsNone(first["ace"])
+            self.assertEqual(first["generation"]["engine"], "stable-audio-3")
+            self.assertEqual(first["id"], base["id"])
+            self.assertEqual(read_json(primary), base)
+            self.assertEqual(combine(self.layout, self.config, spec, model_variant="stable-audio-3-small"), specific)
+            registry["models"][1]["steps"] = 4
+            combine(self.layout, self.config, spec, model_variant="stable-audio-3-small")
+            second = read_json(specific)
+            self.assertNotEqual(first["stems"]["ace"]["audio"], second["stems"]["ace"]["audio"])
+            for manifest in (base, first, second):
+                self.assertTrue((self.layout.output / "follow" / manifest["stems"]["ace"]["audio"]).exists())
+            self.assertEqual(read_json(primary), base)
+            # Guide-only preparation cannot erase a saved generated Base.
+            combine(self.layout, self.config, spec, run_model=False, reuse=False)
+            self.assertEqual(read_json(primary), base)
+        self.assertEqual(calls, [8, 4])
 
     def test_catalog_lists_located_sources_and_dataset_points(self):
         from experiments.data import read_json

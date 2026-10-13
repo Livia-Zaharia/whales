@@ -7,7 +7,7 @@ project for people; this file covers what you need to change it safely.
 
 - **Whale and Dolphin Orchestra** (main focus): click recording sites on a map to
   seat whales and dolphins, then compose one piece from their measured phrases with
-  ACE-Step 1.5. App in `apps/sound-map/`, engine in `experiments/follow*.py`
+  ACE-Step 1.5 Base/Turbo or Stable Audio 3 Small Music. App in `apps/sound-map/`, engine in `experiments/follow*.py`
   (`main.py follow ...`), method in `docs/follow-the-phrase.md`.
 - **Sound to silver** (in progress): sound shapes Livia's cast-silver jewelry. The
   Hardata II inscription pilot is implemented (`main.py inscription`,
@@ -31,6 +31,11 @@ project for people; this file covers what you need to change it safely.
 | `data/input`, `data/interim`, `data/output` | Downloads, caches and generated outputs. Git-ignored: never commit them |
 
 ACE-Step 1.5 lives in its own uv environment at `data/interim/tools/ACE-Step-1.5`.
+Stable Audio 3 lives separately at `data/interim/tools/Stable-Audio-3`.
+`resources/orchestra-app.json` holds app settings; its `music` section defines
+the available models, Base default/primary, recommendations, configurable speed
+characteristics, descriptions, checkpoints and inference settings. Keep frontend
+choices and backend execution driven by this config instead of hardcoding them.
 
 ## Commands
 
@@ -42,6 +47,8 @@ uv run stop
 # Python 3.12 via uv (pyproject allows >=3.11,<3.14); optional groups: art, viz, mesh, midi
 uv run python -m unittest discover -s tests
 uv run --group art --group viz main.py follow catalog
+uv run main.py follow setup-models       # isolated Stable Audio environment; add --cpu on CPU servers
+uv run main.py follow combine SPEC --model-variant stable-audio-3-small # also base or turbo
 
 # Orchestra app
 cd apps/sound-map
@@ -73,6 +80,14 @@ changes in their areas.
   recomputing anything. Bump `RENDER_VERSION` in `experiments/follow_combine.py`
   whenever rendering, response or scoring code changes, so stale renders get rebuilt.
   `main.py follow combine --rerender` rebuilds a single piece.
+- **Multiple models:** the ensemble spec and seed keep the same piece id across
+  models. Preserve each model's audio and manifest; selecting Base must not erase
+  Turbo or Stable Audio. Use `generation_paths` in `experiments/follow_models.py`
+  for `generated-SEED-MODEL-SETTINGS_HASH` filenames. Per-model manifests are
+  `manifest-MODEL.json`; `manifest.json` points to the configured primary model
+  once it exists. Model settings fingerprints invalidate only that model's cache;
+  changing display labels must not regenerate music. UI links include the model.
+  Identical model requests share a job; different models use the shared queue.
 - **`index.html` anchors:** `scripts/export.ts` parses `<title>`, the `./style.css`
   link and the `./main.ts` script tag. Keep them when editing the page.
 - **Pages and galleries** follow Input → Schema → Output. Keep original recordings

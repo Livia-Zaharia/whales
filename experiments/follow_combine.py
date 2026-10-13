@@ -24,6 +24,7 @@ from .data import Layout, ROOT, now, read_json, write_json
 from .follow import contour_at, directories, onsets, respond, render_guide, run_ace, write_wav
 from .follow_gallery import MUSIC_BAND, event_data, listening
 from .follow_metrics import leakage, load_mono, onset_envelope, timing
+from .follow_models import model_registry, music_model, model_fingerprint, rendered_model, run_stable, generation_paths
 
 WORLD = ROOT / "resources" / "maps" / "world-map-data.json"
 COUNTRIES = ROOT / "resources" / "maps" / "world-countries-110m.geojson"
@@ -31,7 +32,7 @@ ARRANGEMENTS = ("layer", "sequence")
 TASKS = ("cover", "lego")
 # Bump when rendering, response or scoring code changes: saved renders with another version are rebuilt
 # on their next request. Ids hash the spec and config, not the code. Manifests without the field are version 1.
-RENDER_VERSION = 6
+RENDER_VERSION = 7
 
 
 def report_progress(percent: float, stage: str):
@@ -208,19 +209,29 @@ def saved_render(folder: Path, output: Path, needs_ace: bool, model_variant: str
     The id hashes the resolved spec and the experiment config, so a match needs no re-rendering. A render made
     without the model is reused only when this request does not ask for ACE-Step either.
     """
-    path = folder / "manifest.json"
-    if not path.exists():
-        return None
-    manifest = read_json(path)
-    if manifest.get("render_version", 1) != RENDER_VERSION:
-        return None
-    if needs_ace and "ace" not in manifest.get("stems", {}):
-        return None
-    if needs_ace and model_variant == "base" and (manifest.get("ace") or {}).get("variant", "base") == "turbo":
-        return None
-    files = [stem[key] for stem in manifest["stems"].values() for key in ("audio", "image")]
-    files += [f for part in manifest["parts"] for f in part["files"].values()]
-    return path if all((output / f).exists() for f in files) else None
+    registry = model_registry()
+    model = music_model(model_variant, registry)
+    canonical = folder / "manifest.json"
+    specific = folder / f"manifest-{model_variant}.json"
+    paths = [canonical, specific] if model_variant == registry["primary_model"] else [specific, canonical]
+    for path in paths:
+        if not path.exists():
+            continue
+        manifest = read_json(path)
+        if manifest.get("render_version", 1) != RENDER_VERSION:
+            continue
+        if needs_ace:
+            saved = rendered_model(manifest)
+            if "ace" not in manifest.get("stems", {}) or saved != model_variant:
+                continue
+            fingerprint = (manifest.get("generation") or {}).get("model_config_sha256")
+            if fingerprint and fingerprint != model_fingerprint(music_model(saved, registry)):
+                continue
+        files = [stem[key] for stem in manifest["stems"].values() for key in ("audio", "image")]
+        files += [f for part in manifest["parts"] for f in part["files"].values()]
+        if all((output / f).exists() for f in files):
+            return path
+    return None
 
 
 def ace_job(combo: dict, config: dict, folder: Path):
@@ -233,18 +244,21 @@ def ace_job(combo: dict, config: dict, folder: Path):
 
 
 def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = None, run_model: bool = True, offload: bool = False,
-            reuse: bool = True, model_variant: str = "base"):
+            reuse: bool = True, model_variant: str | None = None):
     """Write stems, listening files and manifest.json for one combination; returns the manifest path."""
     import numpy as np
 
-    if model_variant not in {"base", "turbo"}:
-        raise ValueError("Choose the Base or Turbo music model")
-    if model_variant == "turbo" and (spec.get("ace") or {}).get("task") == "lego":
-        raise ValueError("Turbo supports cover composition; choose Base for adding a track")
+    registry = model_registry()
+    model_variant = model_variant or registry["default_model"]
+    model = music_model(model_variant, registry)
+    if model_variant != "base" and (spec.get("ace") or {}).get("task") == "lego":
+        raise ValueError("Choose Base for adding a track; this model supports cover composition")
     report_progress(2, "Preparing the selected recordings…")
     _, output = directories(layout)
     prepared = prepared_sources(layout)
     combo = plan(spec, config, prepared)
+    if combo["duration_s"] > model.get("max_duration_s", float("inf")):
+        raise ValueError(f"{model['label']} supports pieces up to {model['max_duration_s']} seconds. Shorten the piece or choose another model.")
     folder = output / "combos" / combo["id"]
     reused = saved_render(folder, output, bool(combo["ace"] and run_model), model_variant) if reuse else None
     if reused:
@@ -294,22 +308,31 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
     ace_result = None
     ace_name = "ace"
     if combo["ace"] and run_model:
-        # Model choice is an execution preference, so the ensemble keeps its id.
-        # Never replace a completed Base piece with a later Turbo preview.
-        previous = read_json(folder / "manifest.json") if (folder / "manifest.json").exists() else {}
-        if "ace" in previous.get("stems", {}) and (previous.get("ace") or {}).get("variant", "base") == "base":
-            model_variant = "base"
-        ace_name = "ace" if model_variant == "base" else "ace-turbo"
+        # The ensemble id includes the seed; each model and settings revision has
+        # distinct audio and manifest files, so earlier playback stays available.
+        paths = generation_paths(folder, combo["ace"]["seed"], model_variant, model)
+        ace_name = paths["wav"].stem
         model_config = config | {"ace_step": config["ace_step"] | {
-            "model": f"acestep-v15-{model_variant}",
-            **({"inference_steps": 8, "guidance_scale": 1.0} if model_variant == "turbo" else {}),
+            "model": model["checkpoint"], "inference_steps": model["steps"], "guidance_scale": model["guidance_scale"],
         }}
         report_progress(30, "Preparing the music model…")
-        ace_wav = folder / f"{ace_name}.wav"
-        if not ace_wav.exists():
+        ace_wav, results_path = paths["wav"], paths["results"]
+        # Reuse Base/Turbo audio created before filenames included the model.
+        legacy = "ace" if model_variant == "base" else "ace-turbo" if model_variant == "turbo" else None
+        legacy_results = folder / f"{legacy}-results.json"
+        if not ace_wav.exists() and legacy and legacy_results.exists() and (folder / f"{legacy}.wav").exists():
+            old = read_json(legacy_results)
+            job = old.get("jobs", {}).get(f"combo-{combo['id']}", {})
+            if job.get("inference_steps") == model["steps"] and job.get("guidance_scale") == model["guidance_scale"]:
+                shutil.copy2(folder / f"{legacy}.wav", ace_wav)
+                write_json(results_path, old)
+        if not ace_wav.exists() or not results_path.exists() or not reuse:
             job = ace_job(combo, model_config, folder) | {"output": str(ace_wav.resolve())}
-            run_ace(layout, model_config, [job], folder / f"{ace_name}-jobs.json", folder / f"{ace_name}-results.json", ace_root, offload)
-        ace_result = read_json(folder / f"{ace_name}-results.json")["jobs"][f"combo-{combo['id']}"] | {
+            if model["engine"] == "stable-audio-3":
+                run_stable(layout, model, job, paths["jobs"], results_path)
+            else:
+                run_ace(layout, model_config, [job], paths["jobs"], results_path, ace_root, offload)
+        ace_result = read_json(results_path)["jobs"][f"combo-{combo['id']}"] | {
             "model": model_config["ace_step"]["model"], "variant": model_variant,
         }
         report_progress(86, "Preparing the generated music for playback…")
@@ -326,16 +349,27 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
                 results[name]["leakage"] = leakage(audio, mixes["guide"] * scale, rate)
     manifest = {"id": combo["id"], "title": combo["title"], "created_at_utc": now(), "config_sha256": config["config_sha256"], "render_version": RENDER_VERSION,
                 "spec": combo, "duration_s": combo["duration_s"], "scale": scale, "parts": parts, "stems": stems,
-                "scores": results, "ace": ace_result, "interpretation": config["combination"]["interpretation"]}
+                "scores": results, "ace": ace_result if model["engine"] == "ace-step" else None,
+                "generation": {"model_id": model_variant, "engine": model["engine"], "label": model["label"],
+                               "model_config_sha256": model_fingerprint(model), "result": ace_result} if ace_result else None,
+                "interpretation": config["combination"]["interpretation"]}
     # Publish only a complete result; readers retain the Turbo manifest during a
     # Base upgrade, and its separate audio URLs continue to work afterward.
-    if ace_result and ace_result["variant"] == "turbo":
-        preferred = saved_render(folder, output, True, "base")
-        if preferred:
-            return preferred
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=folder, prefix=".manifest-", suffix=".json", delete=False) as pending:
+    canonical = folder / "manifest.json"
+    previous = read_json(canonical) if canonical.exists() else {}
+    specific = folder / f"manifest-{model_variant}.json" if ace_result else folder / "manifest-constructed.json"
+    publish_manifest(specific, manifest)
+    if ace_result:
+        publish_manifest(paths["manifest"], manifest)
+    if not previous.get("stems", {}).get("ace") or ace_result and (model_variant == registry["primary_model"] or rendered_model(previous) != registry["primary_model"]):
+        publish_manifest(canonical, manifest)
+    report_progress(99, "Your piece is ready. Opening playback…")
+    return canonical if ace_result and model_variant == registry["primary_model"] or not ace_result and not previous.get("stems", {}).get("ace") else specific
+
+
+def publish_manifest(path: Path, manifest: dict):
+    """Readers see only a complete result; failed upgrades retain earlier playback."""
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, prefix=".manifest-", suffix=".json", delete=False) as pending:
         json.dump(manifest, pending, indent=2)
         pending.write("\n")
-    Path(pending.name).replace(folder / "manifest.json")
-    report_progress(99, "Your piece is ready. Opening playback…")
-    return folder / "manifest.json"
+    Path(pending.name).replace(path)

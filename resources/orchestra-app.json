@@ -1,0 +1,50 @@
+{
+  "music": {
+    "default_model": "base",
+    "primary_model": "base",
+    "models": [
+      {
+        "id": "base",
+        "label": "ACE-Step Base",
+        "engine": "ace-step",
+        "checkpoint": "acestep-v15-base",
+        "steps": 50,
+        "guidance_scale": 7.0,
+        "description": "Full composition with 50 steps and guidance controls. Takes longer, especially on CPU. Recommended when you want a fuller musical interpretation; other model versions are kept.",
+        "characteristics": [
+          "Slow"
+        ],
+        "recommended": true
+      },
+      {
+        "id": "stable-audio-3-small",
+        "label": "Stable Audio 3 Small Music",
+        "engine": "stable-audio-3",
+        "checkpoint": "small-music",
+        "revision": "8bdfb53c6b0fbc62113cd571fd37373efe15fa14",
+        "steps": 8,
+        "guidance_scale": 1.0,
+        "init_noise_level": 0.6,
+        "max_duration_s": 120,
+        "description": "A smaller, fast eight-step model with a different musical interpretation. Uses the same guide and caption; its audio transformation controls differ from ACE-Step.",
+        "characteristics": [
+          "Fast"
+        ],
+        "recommended": true
+      },
+      {
+        "id": "turbo",
+        "label": "ACE-Step Turbo",
+        "engine": "ace-step",
+        "checkpoint": "acestep-v15-turbo",
+        "steps": 8,
+        "guidance_scale": 1.0,
+        "description": "Fast eight-step preview. Instruments and musical detail can differ from Base. Saved separately so you can compare the two.",
+        "characteristics": [
+          "Fast preview"
+        ],
+        "recommended": false
+      }
+    ]
+  }
+}

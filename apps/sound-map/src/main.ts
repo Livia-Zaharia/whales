@@ -9,7 +9,7 @@ import { catalogUrl, comboUrl, combosUrl, fileUrl, isStatic } from "./lib/api.ts
 import { activePulses, soundingParts } from "./lib/pulses.ts";
 import { precomputedPieces, specKey } from "./lib/precomputed.ts";
 import { readComposition } from "./lib/combine-reader.ts";
-import { modelSatisfies, renderedModel } from "./lib/model-variant.ts";
+import { bundledModels, isModelRegistry, modelLabel, modelMatches, modelSatisfies, renderedModel } from "./lib/model-variant.ts";
 import { initialCatalog, isCatalog, sameCatalog, saveCatalog } from "./lib/catalog-snapshot.ts";
 import worldCountries from "../../../resources/maps/world-countries-110m.geojson" with { type: "json" };
 import { CATEGORY, THREATENED, TREND_ARROW, TREND_WORD, statusLine, statusOf, voiceInfo, type Status } from "./lib/status.ts";
@@ -204,8 +204,28 @@ const preview = new Audio();
 let pieceKey: string | null = null; // the orchestra spec the piece on screen was made from
 const rendered = new Map<string, string>(); // default duos, plus pieces composed or opened this session
 const renderedModels = new Map<string, ModelVariant | null>();
-let selectedModel: ModelVariant = "base";
-try { if (sessionStorage.getItem("whales-compose-model") === "turbo") selectedModel = "turbo"; } catch { /* Base is the default. */ }
+let modelRegistry = bundledModels;
+let selectedModel: ModelVariant = modelRegistry.default_model;
+try { const saved = sessionStorage.getItem("whales-compose-model"); if (modelRegistry.models.some(m => m.id === saved)) selectedModel = saved!; } catch { /* Use the configured default. */ }
+let modelChoiceRevision = 0;
+function renderModelChoices() {
+  const select = $<HTMLSelectElement>("#compose-model");
+  const options = (recommended: boolean) => modelRegistry.models.filter(m => Boolean(m.recommended) === recommended).map(m =>
+    `<option value="${esc(m.id)}">${esc(m.label)}${m.characteristics.length ? ` · ${esc(m.characteristics.join(", "))}` : ""}${m.available === false ? " · unavailable" : ""}</option>`).join("");
+  select.innerHTML = (options(true) ? `<optgroup label="Recommended">${options(true)}</optgroup>` : "")
+    + (options(false) ? `<optgroup label="Other models">${options(false)}</optgroup>` : "");
+  select.value = selectedModel;
+}
+async function refreshModels() {
+  if (isStatic) return;
+  const registry = await json<unknown>("/api/models", { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+  if (!isModelRegistry(registry)) return;
+  modelRegistry = registry;
+  if (!registry.models.some(m => m.id === selectedModel)) selectedModel = registry.default_model;
+  renderModelChoices();
+  if (dockReady) renderDock();
+}
+renderModelChoices();
 const precomputedIds = new Set<string>();
 async function loadPrecomputed() {
   const index = await json<PrecomputedIndex>(fileUrl("duos.json"), { signal: AbortSignal.timeout(10_000) }).catch(() => null);
@@ -444,26 +464,30 @@ function renderDock() {
   const combine = $<HTMLButtonElement>("#combine");
   const take = $<HTMLButtonElement>("#take");
   const ready = !busy && ids.length > 0 && issues.length === 0;
-  const matchesModel = (manifest: Manifest) => !composer!.aceOn || Boolean(manifest.stems.ace) && modelSatisfies(renderedModel(manifest), selectedModel);
+  const matchesModel = (manifest: Manifest) => !composer!.aceOn || modelMatches(manifest, modelRegistry.models.find(m=>m.id===selectedModel)!);
   const fresh = result !== null && key === pieceKey && matchesModel(result);
   const savedModel = renderedModels.get(key);
-  const available = rendered.has(key) && (!composer.aceOn || Boolean(savedModel) && modelSatisfies(savedModel!, selectedModel));
+  const available = rendered.has(key) && (!composer.aceOn || Boolean(savedModel) && modelSatisfies(savedModel!, selectedModel))
+    && (!result || key !== pieceKey || matchesModel(result));
   const upgrade = result !== null && key === pieceKey && !fresh && Boolean(result.stems.ace);
   $<HTMLSelectElement>("#compose-model").disabled = busy || !composer.aceOn;
   $<HTMLSelectElement>("#compose-model").value = selectedModel;
-  $<HTMLElement>("#compose-model-note").textContent = selectedModel === "base"
-    ? "Base uses 50 steps and guidance controls. It takes longer, especially on CPU. Its completed result replaces a Turbo preview of the same ensemble."
-    : "Turbo makes an eight-step preview quickly. Musical detail and instruments can differ from Base. An existing Base result is reused.";
+  const selectedChoice = modelRegistry.models.find(m => m.id === selectedModel)!;
+  $<HTMLElement>("#compose-model-note").textContent = selectedChoice.description;
+  $<HTMLFieldSetElement>("#ace-task").hidden = selectedChoice.engine !== "ace-step";
+  $<HTMLInputElement>("#strength").closest<HTMLElement>(".field")!.hidden = selectedChoice.engine !== "ace-step";
+  if (composer.aceOn) $<HTMLElement>("#model-summary").textContent = `${selectedChoice.label}${composer.spec().ace?.seed === undefined ? "" : ` · seed ${composer.spec().ace?.seed}`}`;
   const canGenerate = !isStatic && !runtimeFailed && !catalogUnavailable && generationRuntime?.python_available !== false
-    && (!composer.aceOn || generationRuntime?.ace_available !== false);
+    && (!composer.aceOn || selectedChoice.available !== false && (selectedChoice.engine !== "ace-step" || generationRuntime?.ace_available !== false));
   $<HTMLElement>("#compose-progress").hidden = !busy;
   $<HTMLElement>("#compose-error").hidden = !compositionError;
   $<HTMLElement>("#compose-error").textContent = compositionError;
-  $<HTMLElement>("#compose-runtime").hidden = !canGenerate || generationRuntime?.cuda_available !== false || !composer.aceOn || ((fresh || available) && !busy) || ids.length === 0;
+  $<HTMLElement>("#compose-runtime").hidden = !canGenerate || (selectedChoice.device ? selectedChoice.device !== "cpu" : generationRuntime?.cuda_available !== false) || !composer.aceOn || ((fresh || available) && !busy) || ids.length === 0;
+  $<HTMLElement>("#compose-runtime").textContent = `${selectedChoice.label} runs on this server's CPU and may take a while. Finished versions are ready to play immediately.`;
   $("#dock").setAttribute("aria-busy", String(busy));
   combine.disabled = !ready || fresh || (!available && !canGenerate);
   combine.textContent = busy ? compositionJob?.state === "queued" ? "Queued…" : "Composing…"
-    : compositionError ? "Try again" : available ? "Play saved piece" : upgrade ? "Compose with Base" : result ? "Update piece" : "Compose piece";
+    : compositionError ? "Try again" : available ? "Play saved piece" : upgrade ? `Compose with ${selectedChoice.label}` : result ? "Update piece" : "Compose piece";
   combine.hidden = fresh && !busy;
   combine.classList.toggle("pending", ready && !fresh && result !== null);
   take.disabled = !ready || !composer.aceOn || !canGenerate;
@@ -484,7 +508,8 @@ function renderDock() {
     : issues.length ? issues[0]!
     : fresh ? `“${pieceTitle(result!.title, result!.parts.map((p) => p.source))}” is ready to play.`
     : available ? "This piece is ready to play."
-    : upgrade ? "Base will replace the Turbo preview when it is ready."
+    : selectedChoice.available === false ? `${selectedChoice.label} is unavailable on this server. Choose another model.`
+    : upgrade ? `Generate another version with ${selectedChoice.label}; your existing audio is kept.`
     : result ? `Changed since “${pieceTitle(result.title, result.parts.map((p) => p.source))}”.`
     : `${ids.length} player${ids.length === 1 ? "" : "s"} ready.`);
 }
@@ -581,12 +606,25 @@ $<HTMLButtonElement>("#clear").addEventListener("click", () => {
 });
 $<HTMLButtonElement>("#combine").addEventListener("click", () => void compose());
 $<HTMLButtonElement>("#take").addEventListener("click", () => void compose(true));
-$<HTMLSelectElement>("#compose-model").addEventListener("change", () => {
+$<HTMLSelectElement>("#compose-model").addEventListener("change", async () => {
   if (busy) return;
-  selectedModel = $<HTMLSelectElement>("#compose-model").value === "turbo" ? "turbo" : "base";
+  selectedModel = $<HTMLSelectElement>("#compose-model").value;
+  if (selectedModel !== "base" && composer?.spec().ace?.task === "lego") {
+    $<HTMLInputElement>('input[name="ace-task"][value="cover"]').checked = true;
+    $<HTMLFieldSetElement>("#ace-task").dispatchEvent(new Event("change", {bubbles:true}));
+  }
+  const revision = ++modelChoiceRevision;
   try { sessionStorage.setItem("whales-compose-model", selectedModel); } catch { /* Selection still works. */ }
   compositionError = "";
   renderDock();
+  if (result && composer && pieceKey === specKey(composer.spec(), catalog)) {
+    const key = pieceKey;
+    const manifest = await piece(result.id, selectedModel).catch(() => null);
+    if (manifest && revision === modelChoiceRevision && !busy && key === specKey(composer.spec(), catalog)) {
+      renderedModels.set(key, renderedModel(manifest));
+      showResult(manifest, { seat: false, autoplay: false, scroll: false });
+    }
+  }
 });
 
 /* ---------- compose ---------- */
@@ -595,10 +633,10 @@ async function compose(newTake = false) {
   if (newTake) composer.newSeed();
   const spec = composer.spec();
   const key = specKey(spec, catalog);
-  if (!newTake && result && key === pieceKey && (!spec.ace || result.stems.ace && modelSatisfies(renderedModel(result), selectedModel))) return;
+  if (!newTake && result && key === pieceKey && (!spec.ace || modelMatches(result, modelRegistry.models.find(m=>m.id===selectedModel)!))) return;
   const known = newTake ? undefined : rendered.get(key);
   if (known) {
-    const manifest = await piece(known).catch(() => null);
+    const manifest = await piece(known, spec.ace ? selectedModel : undefined).catch(() => null);
     if (manifest && (!spec.ace || manifest.stems.ace && modelSatisfies(renderedModel(manifest), selectedModel))) {
       renderedModels.set(key, manifest.stems.ace ? renderedModel(manifest) : null);
       pieceKey = key;
@@ -607,7 +645,7 @@ async function compose(newTake = false) {
     }
   }
   if (isStatic || runtimeFailed || catalogUnavailable || generationRuntime?.python_available === false
-      || (composer.aceOn && generationRuntime?.ace_available === false)) {
+      || (composer.aceOn && modelRegistry.models.find(m => m.id === selectedModel)?.available === false)) {
     showEngineNotice();
     return;
   }
@@ -668,7 +706,7 @@ async function followComposition(initial: Response, restore = false) {
       await readComposition(response, (message) => {
         if (message.type === "job") {
           compositionJob = message.job;
-          selectedModel = message.job.model ?? "base";
+          selectedModel = message.job.model ?? modelRegistry.default_model;
           rememberJob(message.job.id);
           if (!restored) {
             restored = true;
@@ -750,7 +788,7 @@ function showResult(manifest: Manifest | null, options: { seat: boolean; autopla
   if (isStatic || !composer) map.setCombination(resultParts());
   const section = $<HTMLElement>("#result");
   section.hidden = false;
-  $<HTMLElement>("#result-eyebrow").textContent = `Current piece / ${manifest.spec.arrangement === "layer" ? "Together" : "In sequence"} · ${manifest.parts.length} player${manifest.parts.length === 1 ? "" : "s"} · ${manifest.duration_s.toFixed(1)} s${manifest.stems.ace ? ` · ${capital(renderedModel(manifest))}` : ""}`;
+  $<HTMLElement>("#result-eyebrow").textContent = `Current piece / ${manifest.spec.arrangement === "layer" ? "Together" : "In sequence"} · ${manifest.parts.length} player${manifest.parts.length === 1 ? "" : "s"} · ${manifest.duration_s.toFixed(1)} s${manifest.stems.ace ? ` · ${modelLabel(renderedModel(manifest), modelRegistry)} · seed ${manifest.spec.ace?.seed ?? ""}` : ""}`;
   $<HTMLElement>("#result-title").textContent = pieceTitle(manifest.title, manifest.parts.map((p) => p.source));
   const resultNote = document.querySelector<HTMLElement>("#result-note");
   if (resultNote) resultNote.textContent = manifest.interpretation;
@@ -770,7 +808,8 @@ function showResult(manifest: Manifest | null, options: { seat: boolean; autopla
   renderTechnicalOutput(manifest);
   $<HTMLElement>("#clock").textContent = `0.0 / ${manifest.duration_s.toFixed(1)} s`;
   $<HTMLElement>("#technical-clock").textContent = `0.0 / ${manifest.duration_s.toFixed(1)} s`;
-  if (location.hash.slice(1) !== manifest.id) history.replaceState(null, "", `#${manifest.id}`);
+  const hash = manifest.id + (manifest.stems.ace && !isStatic ? `~${renderedModel(manifest)}` : "");
+  if (location.hash.slice(1) !== hash) history.replaceState(null, "", `#${hash}`);
   if (options.scroll !== false) section.scrollIntoView({ behavior: reducedMotion() ? "auto" : "smooth", block: "start" });
   renderDock();
   if (options.autoplay) void play(0);
@@ -922,8 +961,8 @@ let summaries = new Map<string, ComboSummary>();
 let programmeUnavailable = false;
 
 /** A saved piece. The server already applies preset names; the published copy applies them from combos.json. */
-async function piece(id: string): Promise<Manifest> {
-  const manifest = await json<Manifest>(comboUrl(id));
+async function piece(id: string, model?: string): Promise<Manifest> {
+  const manifest = await json<Manifest>(comboUrl(id) + (model && !isStatic ? `?model=${encodeURIComponent(model)}` : ""));
   const summary = summaries.get(id);
   return isStatic && summary?.preset ? { ...manifest, title: summary.title, preset: true } : manifest;
 }
@@ -980,7 +1019,8 @@ dockReady = true;
 orchestraChanged();
 void refreshCatalog();
 void loadPrecomputed();
-setInterval(() => { if (document.visibilityState === "visible") void refreshCatalog(); }, 5 * 60_000);
+void refreshModels();
+setInterval(() => { if (document.visibilityState === "visible") { void refreshCatalog(); void refreshModels(); } }, 5 * 60_000);
 await loadSaved();
 if (isStatic && !location.hash) {
   const first = document.querySelector<HTMLButtonElement>("#saved [data-combo]");
@@ -989,8 +1029,12 @@ if (isStatic && !location.hash) {
 
 // A bare #<piece id> opens that piece and seats its players, so pieces can be linked.
 async function openFromHash(scroll = true) {
-  const id = location.hash.slice(1);
-  if (/^[0-9a-f]{12}$/.test(id) && id !== result?.id) showResult(await piece(id).catch(() => null), { seat: true, scroll });
+  const [id, model] = location.hash.slice(1).split("~");
+  if (id && /^[0-9a-f]{12}$/.test(id) && (!model || /^[a-z][a-z0-9-]{0,63}$/.test(model))
+      && (id !== result?.id || result && model && model !== renderedModel(result))) {
+    const manifest = await piece(id, model).catch(() => null);
+    if (manifest) { selectedModel = model ?? renderedModel(manifest); showResult(manifest, { seat: true, scroll }); }
+  }
 }
 window.addEventListener("hashchange", () => void openFromHash());
 await openFromHash(false);
