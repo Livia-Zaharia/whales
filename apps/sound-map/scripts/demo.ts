@@ -1,6 +1,6 @@
 // Copy a playable Phrase Atlas bundle into apps/sound-map/demo/follow so a fresh clone can run the
 // app without the Python pipeline. Only what the player reads is copied: MP3 stems, WebP
-// spectrograms, catalog.json, the country outlines and each combination's manifest.json.
+// spectrograms, catalog.json, ensemble indices, country outlines and all playback manifests.
 // Audio and images are stored with Git LFS (see the root .gitattributes).
 // Run: bun scripts/demo.ts [combo-id,combo-id,...] [--append]   (default: every combination)
 
@@ -8,6 +8,7 @@ import { mkdir, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { SPECIES_ICON_FILES } from "../src/lib/species.ts";
 import type { Catalog, Manifest } from "../src/lib/types.ts";
+import { playbackManifests, playbackMedia, PRECOMPUTED_FILES } from "./playback.ts";
 
 const ROOT = resolve(process.env.WHALES_ROOT ?? join(import.meta.dir, "..", "..", ".."));
 const OUTPUT = join(ROOT, "data", "output", "follow");
@@ -30,6 +31,7 @@ const args = process.argv.slice(2);
 const append = args.includes("--append");
 const wanted = args.find((arg) => !arg.startsWith("--"))?.split(",").filter(Boolean);
 const ids = wanted ?? (await readdir(join(OUTPUT, "combos")));
+const selectedIds = new Set(ids);
 const manifests: Manifest[] = [];
 for (const id of ids) {
   const file = Bun.file(join(OUTPUT, "combos", id, "manifest.json"));
@@ -41,6 +43,15 @@ if (append) {
   for (const id of await readdir(join(DEMO, "combos")).catch(() => [] as string[])) {
     const file = Bun.file(join(DEMO, "combos", id, "manifest.json"));
     if (!included.has(id) && await file.exists()) manifests.push((await file.json()) as Manifest);
+  }
+}
+const bundledManifests = new Map<string, Manifest>();
+for (const manifest of manifests) {
+  if (append) {
+    for (const [path, variant] of await playbackManifests(DEMO, manifest.id)) bundledManifests.set(path, variant);
+  }
+  if (selectedIds.has(manifest.id)) {
+    for (const [path, variant] of await playbackManifests(OUTPUT, manifest.id)) bundledManifests.set(path, variant);
   }
 }
 
@@ -55,14 +66,13 @@ function relativize<T>(value: T): T {
 }
 
 const media = new Set<string>([catalog.countries, ...artwork]);
-if (await Bun.file(join(OUTPUT, "duos.json")).exists()) media.add("duos.json");
+for (const path of PRECOMPUTED_FILES) {
+  if (await Bun.file(join(OUTPUT, path)).exists()) media.add(path);
+}
 for (const source of catalog.sources) {
   for (const listening of Object.values(source.files)) media.add(listening.audio).add(listening.image);
 }
-for (const m of manifests) {
-  for (const stem of Object.values(m.stems)) if (stem) media.add(stem.audio).add(stem.image);
-  for (const part of m.parts) media.add(part.files.animal).add(part.files.guide);
-}
+for (const manifest of bundledManifests.values()) for (const path of playbackMedia(manifest)) media.add(path);
 
 if (!append) await rm(DEMO, { recursive: true, force: true });
 let bytes = 0;
@@ -77,7 +87,7 @@ for (const path of [...media].sort()) {
   await write(path, file);
 }
 await write("catalog.json", JSON.stringify(relativize(catalog)));
-for (const m of manifests) await write(`combos/${m.id}/manifest.json`, JSON.stringify(relativize(m), null, 1));
+for (const [path, manifest] of bundledManifests) await write(path, JSON.stringify(relativize(manifest), null, 1));
 // Preset names for the bundled pieces travel with them; the server reads them when data/output has none.
 const presetFile = Bun.file(join(OUTPUT, "presets.json"));
 const presets = {
@@ -114,4 +124,4 @@ ${rows.join("\n")}
 |---|---|---|---|
 ${combos.join("\n")}
 `);
-console.log(`${media.size} media files + ${manifests.length} manifests, ${(bytes / 1e6).toFixed(1)} MB → ${DEMO}`);
+console.log(`${media.size} media files + ${bundledManifests.size} manifests, ${(bytes / 1e6).toFixed(1)} MB → ${DEMO}`);

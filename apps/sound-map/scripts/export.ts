@@ -8,6 +8,7 @@ import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SPECIES_ICON_FILES } from "../src/lib/species.ts";
 import type { Catalog, ComboSummary, Manifest } from "../src/lib/types.ts";
+import { playbackManifests, playbackMedia, PRECOMPUTED_FILES } from "./playback.ts";
 
 const ROOT = resolve(process.env.WHALES_ROOT ?? join(import.meta.dir, "..", "..", ".."));
 const OUTPUT = join(ROOT, "data", "output", "follow");
@@ -47,7 +48,9 @@ const summaries: ComboSummary[] = manifests.map((m) => ({
 await Bun.write(join(OUTPUT, "combos.json"), JSON.stringify(summaries));
 
 const files = new Set<string>(["atlas-app.js", "atlas.css", "catalog.json", "combos.json", ...artwork, catalog.countries]);
-if (await Bun.file(join(OUTPUT, "duos.json")).exists()) files.add("duos.json");
+for (const path of PRECOMPUTED_FILES) {
+  if (await Bun.file(join(OUTPUT, path)).exists()) files.add(path);
+}
 for (const source of catalog.sources) {
   for (const listening of Object.values(source.files)) {
     files.add(listening.audio);
@@ -55,15 +58,9 @@ for (const source of catalog.sources) {
   }
 }
 for (const m of manifests) {
-  files.add(`combos/${m.id}/manifest.json`);
-  for (const stem of Object.values(m.stems)) {
-    if (!stem) continue;
-    files.add(stem.audio);
-    files.add(stem.image);
-  }
-  for (const part of m.parts) {
-    files.add(part.files.animal);
-    files.add(part.files.guide);
+  for (const [path, manifest] of await playbackManifests(OUTPUT, m.id)) {
+    files.add(path);
+    for (const media of playbackMedia(manifest)) files.add(media);
   }
 }
 let bytes = 0;

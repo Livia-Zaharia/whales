@@ -37,6 +37,18 @@ describe("precomputed playback lookup", () => {
     expect(specKey({ ...request, title: "My renamed preset" }, catalog)).toBe(specKey(request, catalog));
   });
 
+  test("three selected recordings find a saved trio in every click order", () => {
+    const sources = catalog.sources.slice(0, 3);
+    const defaults = buildSpec("", "layer", 1, sources.map(draftFor), { task: "cover", audio_cover_strength: 0.6 });
+    const trio: PrecomputedIndex = { ...index, pieces: [{ id: "fedcba654321", spec: defaults }] };
+    const pieces = precomputedPieces(trio, catalog);
+    for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
+      const request = { ...defaults, parts: order.map(i => defaults.parts[i]!) };
+      expect(pieces.get(specKey(request, catalog))).toBe("fedcba654321");
+    }
+    expect(pieces.has(specKey(request, catalog))).toBe(false);
+  });
+
   test("custom timing, balance, registers, captions and takes request their own renders", () => {
     const pieces = precomputedPieces(index, catalog);
     for (const change of [{ offset_s: 4 }, { gain_db: -3 }, { shift_octaves: a!.register_shift_octaves + 1 }, { trim_s: [0, 10] as [number, number] }]) {

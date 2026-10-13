@@ -202,7 +202,7 @@ const siteOf = new Map(sites.flatMap((site) => site.sources.map((s) => [s.id, si
 const player = new Player();
 const preview = new Audio();
 let pieceKey: string | null = null; // the orchestra spec the piece on screen was made from
-const rendered = new Map<string, string>(); // default duos, plus pieces composed or opened this session
+const rendered = new Map<string, string>(); // precomputed ensembles, plus pieces composed or opened this session
 const renderedModels = new Map<string, ModelVariant | null>();
 let modelRegistry = bundledModels;
 let selectedModel: ModelVariant = modelRegistry.default_model;
@@ -228,8 +228,11 @@ async function refreshModels() {
 renderModelChoices();
 const precomputedIds = new Set<string>();
 async function loadPrecomputed() {
-  const index = await json<PrecomputedIndex>(fileUrl("duos.json"), { signal: AbortSignal.timeout(10_000) }).catch(() => null);
-  for (const [key, id] of precomputedPieces(index, catalog)) { rendered.set(key, id); renderedModels.set(key, "base"); precomputedIds.add(id); }
+  const indices = await Promise.all(["duos.json", "trios.json"].map(path =>
+    json<PrecomputedIndex>(fileUrl(path), { signal: AbortSignal.timeout(10_000) }).catch(() => null)));
+  for (const index of indices) {
+    for (const [key, id] of precomputedPieces(index, catalog)) { rendered.set(key, id); renderedModels.set(key, "base"); precomputedIds.add(id); }
+  }
   if (dockReady) renderDock();
   if (summaries.size) void loadSaved();
 }
