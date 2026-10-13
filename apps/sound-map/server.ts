@@ -5,17 +5,20 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import index from "./src/index.html";
+import { combineStream } from "./src/lib/combine-stream.ts";
 import { contentType, readableLog, safeJoin } from "./src/lib/paths.ts";
 import { SILVER_AUDIO_METHODS } from "./src/lib/silver-audio.ts";
 import { SILVER_AUDIO_RUNTIME } from "./src/lib/silver-performance.ts";
-import type { CombineMessage, ComboSummary, GenerationRuntime, Manifest } from "./src/lib/types.ts";
+import type { ComboSummary, GenerationRuntime, Manifest } from "./src/lib/types.ts";
 
-const ROOT = resolve(process.env.WHALES_ROOT ?? join(import.meta.dir, "..", ".."));
+declare const WHALES_BUILD_ROOT: string; // replaced by the production build
+const ROOT = resolve(process.env.WHALES_ROOT ?? (typeof WHALES_BUILD_ROOT === "string" ? WHALES_BUILD_ROOT : join(import.meta.dir, "..", "..")));
+const APP = join(ROOT, "apps", "sound-map");
 const OUTPUT = join(ROOT, "data", "output", "follow");
 // Committed bundle (Git LFS, `bun scripts/demo.ts`): read when OUTPUT lacks a file, so a fresh clone plays.
-const DEMO = join(import.meta.dir, "demo", "follow");
+const DEMO = join(APP, "demo", "follow");
 // The Sound to silver tab's files: the bench and motion pages from `main.py art silver`, else the committed copy.
-const SILVER = [join(ROOT, "data", "output", "silver"), join(import.meta.dir, "demo", "silver")];
+const SILVER = [join(ROOT, "data", "output", "silver"), join(APP, "demo", "silver")];
 const SILVER_TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".jpg": "image/jpeg", ".svg": "image/svg+xml" };
 const SPECS = join(ROOT, "data", "interim", "follow", "combo-specs");
 // Preset names live beside the pieces, not in their manifests: re-running a piece rewrites its manifest,
@@ -39,17 +42,27 @@ let runtimeProbe: { expires: number; result: Promise<GenerationRuntime> } | null
 async function generationRuntime(): Promise<Response> {
   if (!runtimeProbe || runtimeProbe.expires < Date.now()) {
     const result = (async (): Promise<GenerationRuntime> => {
-      const unavailable: GenerationRuntime = { ace_available: false, cuda_available: null, device: null };
+      const executablePython = join(ROOT, ".venv", "bin", "python");
+      let pythonAvailable = false;
+      if (Bun.which("uv") && await Bun.file(executablePython).exists() && await Bun.file(join(ROOT, "main.py")).exists()) {
+        try {
+          const probe = Bun.spawn([executablePython, "-c", "import numpy, scipy, soundfile, matplotlib, PIL; import experiments.follow_combine"], {
+            cwd: ROOT, env: process.env, stdout: "ignore", stderr: "ignore", timeout: 8_000,
+          });
+          pythonAvailable = await probe.exited === 0;
+        } catch { /* Playback works without a Python installation. */ }
+      }
+      const unavailable: GenerationRuntime = { python_available: pythonAvailable, ace_available: false, cuda_available: null, device: null };
       const executable = join(ROOT, "data", "interim", "tools", "ACE-Step-1.5", ".venv", "bin", "python");
       if (!(await Bun.file(executable).exists())) return unavailable;
       try {
         // Ask the same PyTorch environment and detector used by the music runner, not nvidia-smi.
         const child = Bun.spawn([executable, join(ROOT, "experiments", "follow_ace.py"), "--runtime"], {
-          cwd: ROOT, env: process.env, stdout: "pipe", stderr: "ignore",
+          cwd: ROOT, env: process.env, stdout: "pipe", stderr: "ignore", timeout: 8_000,
         });
         const output = await new Response(child.stdout).text();
         if (await child.exited !== 0) return unavailable;
-        return { ace_available: true, ...JSON.parse(output) } as GenerationRuntime;
+        return { python_available: pythonAvailable, ace_available: true, ...JSON.parse(output) } as GenerationRuntime;
       } catch { return unavailable; }
     })();
     runtimeProbe = { expires: Date.now() + 30_000, result };
@@ -95,8 +108,16 @@ async function catalog(): Promise<Response> {
     return new Response(demo, { headers: { "content-type": "application/json" } });
   }
   if (!(await file.exists())) {
+    const runtime = await (await generationRuntime()).json() as GenerationRuntime;
+    if (!runtime.python_available) {
+      if (await demo.exists()) return new Response(demo, { headers: { "content-type": "application/json" } });
+      return Response.json({ error: "The Python engine is unavailable and no playback catalog is installed." }, { status: 503 });
+    }
     const { code, tail } = await python(["catalog"]);
-    if (code !== 0) return Response.json({ error: "Could not build the catalog. Run 'main.py follow prepare' first.", log: tail }, { status: 500 });
+    if (code !== 0) {
+      if (await demo.exists()) return new Response(demo, { headers: { "content-type": "application/json" } });
+      return Response.json({ error: "Could not load the catalog. Install the prepared dataset with 'main.py follow dataset download'.", log: tail }, { status: 500 });
+    }
   }
   return new Response(Bun.file(join(OUTPUT, "catalog.json")), { headers: { "content-type": "application/json" } });
 }
@@ -149,6 +170,8 @@ async function savePreset(request: Request, id: string): Promise<Response> {
 
 async function combine(request: Request): Promise<Response> {
   if (running) return Response.json({ error: "A combination is already running. Wait for it to finish." }, { status: 409 });
+  const runtime = await (await generationRuntime()).json() as GenerationRuntime;
+  if (!runtime.python_available) return Response.json({ error: "The Python composition engine is unavailable. Recordings and saved pieces still play." }, { status: 503 });
   const body = await request.text();
   if (body.length > MAX_SPEC_BYTES) return Response.json({ error: "The spec is too large." }, { status: 413 });
   let spec: unknown;
@@ -163,37 +186,22 @@ async function combine(request: Request): Promise<Response> {
   const specPath = join(SPECS, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   await Bun.write(specPath, JSON.stringify(spec, null, 2));
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const send = (message: CombineMessage) => controller.enqueue(encoder.encode(JSON.stringify(message) + "\n"));
-      // Blank NDJSON lines keep long CPU jobs connected without adding messages to the UI.
-      const heartbeat = setInterval(() => {
-        try { controller.enqueue(encoder.encode("\n")); }
-        catch { clearInterval(heartbeat); }
-      }, 20_000);
-      const job = (async () => {
-        const args = ["combine", specPath, ...(model ? [] : ["--no-model"])];
-        const { code, tail } = await python(args, (line) => {
-          if (readableLog(line) && !line.startsWith("ERROR: ")) send({ type: "log", text: line.trim() });
-        });
-        const last = tail.filter((line) => line.trim()).at(-1) ?? "";
-        if (code === 0 && last.endsWith("manifest.json")) {
-          send({ type: "done", manifest: (await Bun.file(last.trim()).json()) as Manifest });
-        } else {
-          const reason = tail.find((line) => line.startsWith("ERROR: "))?.slice(7) ?? tail.filter((line) => /Error|Traceback/.test(line)).at(-1);
-          send({ type: "error", message: reason?.trim() || `Python exited with code ${code}.` });
-        }
-      })();
-      running = job;
-      job.catch((error) => send({ type: "error", message: String(error) }))
-        .finally(() => {
-          clearInterval(heartbeat);
-          running = null;
-          controller.close();
-        });
-    },
+  if (running) return Response.json({ error: "A combination is already running. Wait for it to finish." }, { status: 409 });
+  const { stream, completion } = combineStream(async (send) => {
+    const args = ["combine", specPath, ...(model ? [] : ["--no-model"])];
+    const { code, tail } = await python(args, (line) => {
+      if (readableLog(line) && !line.startsWith("ERROR: ")) send({ type: "log", text: line.trim() });
+    });
+    const last = tail.filter((line) => line.trim()).at(-1) ?? "";
+    if (code === 0 && last.endsWith("manifest.json")) {
+      send({ type: "done", manifest: (await Bun.file(last.trim()).json()) as Manifest });
+    } else {
+      const reason = tail.find((line) => line.startsWith("ERROR: "))?.slice(7) ?? tail.filter((line) => /Error|Traceback/.test(line)).at(-1);
+      send({ type: "error", message: reason?.trim() || `Python exited with code ${code}.` });
+    }
   });
+  running = completion;
+  void completion.then(() => { running = null; });
   return new Response(stream, { headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" } });
 }
 

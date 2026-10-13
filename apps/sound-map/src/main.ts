@@ -119,6 +119,38 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+let generationRuntime: GenerationRuntime | null = null;
+let runtimeFailed = false;
+let dockReady = false;
+function showEngineNotice() {
+  const note = $<HTMLElement>("#engine-notice");
+  note.textContent = isStatic
+    ? "Playback only: the Python composition engine is not connected. Recordings and saved pieces remain playable."
+    : runtimeFailed
+    ? "The composition service could not be reached. New pieces cannot be created here."
+    : generationRuntime?.python_available === false
+    ? "The Python composition engine is unavailable. You can still listen to recordings and saved pieces."
+    : generationRuntime?.ace_available === false
+    ? "The music model is unavailable. Recorded voices, saved pieces, musical guides and constructed responses remain available."
+    : "";
+  note.hidden = !note.textContent;
+}
+async function refreshRuntime() {
+  try {
+    generationRuntime = await json<GenerationRuntime>("/api/runtime", { signal: AbortSignal.timeout(10_000) });
+    runtimeFailed = false;
+  } catch {
+    runtimeFailed = true;
+  }
+  showEngineNotice();
+  if (dockReady) renderDock();
+}
+showEngineNotice();
+if (!isStatic) {
+  void refreshRuntime();
+  setInterval(() => { if (document.visibilityState === "visible") void refreshRuntime(); }, 30_000);
+}
+
 const catalog = await json<Catalog>(catalogUrl()).catch(loadError);
 const countries = await json<Countries>(fileUrl(catalog.countries)).catch(loadError);
 const sites = sitesOf(catalog.sources);
@@ -131,11 +163,6 @@ const duoIndex = await json<PrecomputedIndex>(fileUrl("duos.json")).catch(() => 
 const rendered = precomputedPieces(duoIndex, catalog); // default duos, plus pieces composed or opened this session
 const precomputedIds = new Set(rendered.values());
 let busy = false;
-let generationRuntime: GenerationRuntime | null = null;
-if (!isStatic) void json<GenerationRuntime>("/api/runtime").then(runtime => {
-  generationRuntime = runtime;
-  renderDock();
-}).catch(() => {}); // An unknown runtime must not imply that CUDA is absent.
 let flash = "";
 let flashTimer = 0;
 let openSiteKey: string | null = null;
@@ -358,14 +385,16 @@ function renderDock() {
   const ready = !busy && ids.length > 0 && issues.length === 0;
   const fresh = result !== null && key === pieceKey;
   const available = rendered.has(key);
+  const canGenerate = !isStatic && !runtimeFailed && generationRuntime?.python_available !== false
+    && (!composer.aceOn || generationRuntime?.ace_available !== false);
   $<HTMLElement>("#compose-progress").hidden = !busy;
-  $<HTMLElement>("#compose-runtime").hidden = generationRuntime?.cuda_available !== false || !composer.aceOn || ((fresh || available) && !busy) || ids.length === 0;
+  $<HTMLElement>("#compose-runtime").hidden = !canGenerate || generationRuntime?.cuda_available !== false || !composer.aceOn || ((fresh || available) && !busy) || ids.length === 0;
   $("#dock").setAttribute("aria-busy", String(busy));
-  combine.disabled = !ready || fresh;
+  combine.disabled = !ready || fresh || (!available && !canGenerate);
   combine.textContent = busy ? "Composing…" : available ? "Play saved piece" : result ? "Update piece" : "Compose piece";
   combine.hidden = fresh && !busy;
   combine.classList.toggle("pending", ready && !fresh && result !== null);
-  take.disabled = !ready || !composer.aceOn;
+  take.disabled = !ready || !composer.aceOn || !canGenerate;
   take.hidden = ids.length === 0;
   $<HTMLButtonElement>("#clear").disabled = busy || ids.length === 0;
   if (busy) return;
@@ -488,6 +517,11 @@ async function compose(newTake = false) {
       showResult(manifest, { seat: false, autoplay: true });
       return;
     }
+  }
+  if (isStatic || runtimeFailed || generationRuntime?.python_available === false
+      || (composer.aceOn && generationRuntime?.ace_available === false)) {
+    showEngineNotice();
+    return;
   }
   const log = $<HTMLPreElement>("#log");
   const status = $<HTMLElement>("#status");
@@ -767,6 +801,7 @@ if (isStatic) {
   document.body.classList.add("static");
   $<HTMLElement>("#map-hint").textContent = "Scroll or pinch to zoom. Select a site to hear its recordings.";
 }
+dockReady = true;
 orchestraChanged();
 await loadSaved();
 if (isStatic && !location.hash) {

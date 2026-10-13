@@ -5,11 +5,11 @@
 
 Settings come from .env, which the first start copies from .env.template. Variables
 already set in the environment win over .env, and options win over both. Each step
-works only when something is missing, so a second start takes seconds. A step that
+sets up missing dependencies and rebuilds the app on every start. A step that
 fails prints a warning with its fix and the start carries on where it can: without
 Git LFS the finished demo pieces are missing, and without ACE-Step a piece keeps its
-guide and deterministic response. Only a missing Bun, a busy port or a server that
-does not come up stop it.
+guide and deterministic response. Missing Bun, a failed app build, a busy port or
+a server that does not come up stop startup.
 """
 
 from enum import Enum
@@ -25,19 +25,23 @@ from typing import Annotated
 from urllib.request import urlopen
 
 import typer
+from huggingface_hub.errors import HfHubHTTPError
 
 from experiments.data import ROOT, Layout, now, read_json, write_json
 from experiments.follow import ACE_DIR, load_config
+from experiments.follow_dataset import download_bundle, prepared_current
 
 APP = ROOT / "apps" / "sound-map"
 DEMO = APP / "demo" / "follow"
 STATE = ROOT / "data" / "interim" / "orchestra"
 SERVER = STATE / "server.json"
 LOG = STATE / "server.log"
+BUILD = ROOT / "data" / "output" / "sound-map-app"
+BUILT_SERVER = BUILD / "current" / "server.js"
 ENV, TEMPLATE = ROOT / ".env", ROOT / ".env.template"
 # The ACE-Step 1.5 commit every committed demo piece was composed with; its weights are pinned in follow-music.json.
 ACE_COMMIT = "ca1e85fe9430179831e6bc6be790c332190a3866"
-MIN_BUN = (1, 2, 3)  # Bun.serve routes with HTML imports
+MIN_BUN = (1, 2, 17)  # ahead-of-time builds of Bun.serve HTML imports
 UV = shutil.which("uv") or os.environ.get("UV", "uv")  # `uv run` exports UV even when uv is not on PATH
 BASE_PYTHON = [UV, "run"]  # metadata and downloads do not need audio or model dependencies
 PYTHON = BASE_PYTHON + ["--group", "audio"]  # the environment server.ts runs `main.py follow` in
@@ -157,7 +161,7 @@ def tools(report: Report) -> str:
         report.fail(f"`{bun} --version` fails, so this Bun is broken. Reinstall it from https://bun.sh.")
     found = [f"Bun {bun_version}"]
     if tuple(int(n) for n in re.findall(r"\d+", bun_version)[:3]) < MIN_BUN:
-        report.warn(f"Bun {bun_version} is older than 1.2.3, which the server needs for its page routes. Run `bun upgrade`.")
+        report.warn(f"Bun {bun_version} is older than 1.2.17, which the production build needs. Run `bun upgrade`.")
     if uv := output(UV, "--version"):
         found.append(uv)
     if not shutil.which("uv"):
@@ -215,44 +219,41 @@ def packages(report: Report, bun: str):
                     "apps/sound-map/node_modules and run `uv run start` again.")
 
 
+def build_app(report: Report, bun: str):
+    report.step("Production app (bun run build)")
+    if not run([bun, "run", "build"], cwd=APP):
+        report.fail("The production build failed (output above). Any running server keeps its previous build. "
+                    "Fix the build and run `uv run start` again.")
+    if not BUILT_SERVER.is_file():
+        report.fail("The build did not produce the production server.")
+    report.ok("server and frontend bundled before startup")
+
+
 def recordings(report: Report, layout: Layout):
-    report.step("Recordings: fetch, measure and catalog")
+    report.step("Prepared recordings and measured phrases")
     config = load_config()
-    prepared, catalog = layout.interim / "follow" / "prepared.json", layout.output / "follow" / "catalog.json"
+    catalog = layout.output / "follow" / "catalog.json"
     ids = {source["id"] for source in config["sources"]}
+    measured = prepared_current(layout, config)
     try:
-        manifest = read_json(prepared)
-        measured = manifest["config_sha256"] == config["config_sha256"] and ids <= {s["id"] for s in manifest["sources"]}
+        catalog_current = read_json(catalog)["config_sha256"] == config["config_sha256"]
     except (OSError, ValueError, KeyError):
-        measured = False
-    if measured and catalog.exists() and catalog.stat().st_mtime >= prepared.stat().st_mtime:
+        catalog_current = False
+    if measured and catalog_current:
         report.ok(f"{len(ids)} recordings measured, catalog up to date")
         return
     if not measured:
-        report.note("Downloading and measuring the recordings. The first run also installs the audio "
-                    "analysis dependencies; ACE-Step uses its own environment.")
-    # `follow fetch` expects two inputs from other commands: the DCLDE annotations that cut the orca
-    # excerpts, and the long OpenWhistle sequences behind the dolphin sources.
-    steps = []
-    if not measured:
-        if not (layout.input / "dclde" / "Annotations.csv").exists():
-            steps.append(("`main.py dclde metadata`", BASE_PYTHON + ["main.py", "dclde", "metadata"]))
-        if any(not (layout.input / s["file"]).exists() for s in config["sources"] if s.get("file", "").startswith("long-audio/")):
-            steps.append(("Downloading the long OpenWhistle sequences", BASE_PYTHON + ["python", "-c", "from experiments.data import Layout, "
-                                                                                       "fetch_long_samples; print(fetch_long_samples(Layout()))"]))
-        steps += [("`main.py follow fetch`", PYTHON + ["main.py", "follow", "fetch"]),
-                  ("`main.py follow prepare`", PYTHON + ["main.py", "follow", "prepare"])]
-    steps.append(("`main.py follow catalog`", PYTHON + ["main.py", "follow", "catalog"]))
-    for label, command in steps:
-        if not run(command):
-            if catalog.exists():
-                fallback = "The app keeps the catalog it has."
-            elif not (layout.output / "follow").exists():
-                fallback = "Until then the app plays the demo bundle."
-            else:  # server.ts falls back to the demo only while data/output/follow does not exist
-                fallback = "Until then the app cannot load its map."
-            report.warn(f"{label} failed (output above). {fallback} Run `uv run start` again once it is fixed.")
+        report.note("Downloading the pinned Hugging Face bundle: Parquet measurements and lossless FLAC clips.")
+        try:
+            download_bundle(layout, config)
+        except (OSError, ValueError, KeyError, HfHubHTTPError) as error:
+            report.warn(f"Prepared dataset could not load: {error}. The app keeps its existing catalog or plays the demo bundle. "
+                        "Startup does not download source corpora; retry with `main.py follow dataset download`.")
             return
+        catalog_current = read_json(catalog)["config_sha256"] == config["config_sha256"]
+    if not catalog_current and not run(PYTHON + ["main.py", "follow", "catalog", "--data-dir", str(layout.root)]):
+        report.warn("Refreshing the catalog failed. Prepared recordings are retained; run `main.py follow catalog` to retry.")
+        return
     report.ok(f"{len(ids)} recordings measured, catalog written")
 
 
@@ -341,7 +342,11 @@ def ours(pid: int) -> bool:
     if not alive(pid):
         return False
     try:
-        return b"server.ts" in Path(f"/proc/{pid}/cmdline").read_bytes()
+        command = Path(f"/proc/{pid}/cmdline").read_bytes()
+        return b"server.ts" in command or any(
+            part.startswith((str(BUILD) + "/").encode()) and part.endswith(b"/server.js")
+            for part in command.split(b"\0")
+        )
     except FileNotFoundError:
         return not Path("/proc/self").exists()  # no /proc (macOS): trust the record
     except OSError:
@@ -375,12 +380,13 @@ def serve(report: Report, bun: str, host: str, port: int) -> str:
     port_free(report, host, port)
     url = f"http://{'localhost' if host in WILDCARD else host}:{port}"
     STATE.mkdir(parents=True, exist_ok=True)
-    env = os.environ | {"ORCHESTRA_PORT": str(port), "ORCHESTRA_HOST": host, "NODE_ENV": "production"}
+    env = os.environ | {"ORCHESTRA_PORT": str(port), "ORCHESTRA_HOST": host, "NODE_ENV": "production", "WHALES_ROOT": str(ROOT)}
+    executable = BUILT_SERVER.resolve()
     with LOG.open("w", encoding="utf-8") as log:  # its own session, so it outlives this command
-        server = subprocess.Popen([bun, "server.ts"], cwd=APP, env=env, stdin=subprocess.DEVNULL, stdout=log,
+        server = subprocess.Popen([bun, str(executable)], cwd=executable.parent, env=env, stdin=subprocess.DEVNULL, stdout=log,
                                   stderr=subprocess.STDOUT, start_new_session=True)
     write_json(SERVER, {"pid": server.pid, "url": url, "host": host, "port": port, "log": str(LOG.relative_to(ROOT)),
-                        "started_at_utc": now()})
+                        "started_at_utc": now(), "build_dir": str(executable.parent)})
     log_name = LOG.relative_to(ROOT)
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
@@ -417,7 +423,13 @@ def start(
 ):
     """Set up whatever is missing, then serve the Whale and Dolphin Orchestra in the background."""
     if state := running():
+        report = Report()
+        bun = tools(report)
+        packages(report, bun)
+        build_app(report, bun)
         typer.echo(f"The orchestra is already running at {state['url']} (pid {state['pid']}). Stop it with `uv run stop`.")
+        report.note("The new build will be used on the next restart; the running server is retained.")
+        report.summary()
         return
     report = Report()
     typer.secho("Whale and Dolphin Orchestra", bold=True)
@@ -432,6 +444,7 @@ def start(
     port_free(report, host, port)  # before the long steps, not after them
     demo_bundle(report)
     packages(report, bun)
+    build_app(report, bun)
     recordings(report, layout)
     ace_step(report, ace, layout)
     url = serve(report, bun, host, port)

@@ -66,28 +66,46 @@ uv run start           # set up what is missing, then serve http://127.0.0.1:307
 uv run stop            # stop the server
 ```
 
-`uv run start` does each step only when it is missing, so after the first run it
-takes a second or two:
+`uv run start` runs `bun run build` before launching the production app. The
+server and its HTML, JavaScript and CSS are bundled into
+`data/output/sound-map-app/current`; the server serves those built assets without
+bundling on requests. A failed build leaves the previous release intact. If the
+server is already running, start builds the next release without interrupting
+the current one. Restart to load it.
+
+`bun run export` in `apps/sound-map` creates a static playback snapshot. Live
+composition uses the running Bun server and Python backend. A playback-only copy
+shows that the Python engine is disconnected; the live app also checks the engine
+and disables new composition when it is unavailable. Saved pieces remain playable.
+
+`uv run start` sets up missing dependencies and rebuilds the app on every start:
 
 1. creates `.env` from `.env.template`;
-2. pulls the demo bundle (20 recordings and 22 finished pieces) with Git LFS;
-3. installs the app's packages with Bun;
-4. downloads and measures the recordings, then writes the catalog;
+2. pulls the demo bundle (recordings and finished pieces) with Git LFS;
+3. installs the app's packages with Bun and builds the production app;
+4. installs the pinned [prepared-phrase dataset](https://huggingface.co/datasets/antonkulaga/whale-dolphin-orchestra)
+   from Hugging Face (78 MiB): extracted FLAC clips, Parquet measurements,
+   musical stems and playback assets. It does not fetch source corpora, daily TAR
+   archives or annotation databases, and does not repeat measurement;
 5. with an NVIDIA GPU, installs ACE-Step 1.5 into `data/interim/tools/ACE-Step-1.5`,
    with the code and weights pinned to the versions that made the demo pieces
-   (about 22 GB, once);
-6. starts the server, which logs to `data/interim/orchestra/server.log`.
+   (about 6 GB of weights, plus inference dependencies);
+6. starts the built server, which logs to `data/interim/orchestra/server.log`.
 
 When a step fails, it prints a warning with the fix and the rest carries on. Without
 Git LFS the finished demo pieces are missing. Without ACE-Step a piece keeps its guide
-and deterministic response. Only a missing Bun or a busy port stops the start. Set
+and deterministic response. Missing Bun, a failed app build, a busy port or a server
+that does not come up stop startup. Set
 the port, host and ACE-Step choice in `.env` (`ORCHESTRA_PORT`, `ORCHESTRA_HOST`,
 `ORCHESTRA_ACE`) or per run (`uv run start --port 3071 --ace no`); `bun run dev`
 reads the same `.env`.
 
-Recording analysis and deterministic composition use the small `audio` dependency
-group. They do not install PyTorch, CUDA or the image models from `art`; metadata
-downloads use only the base dependencies. Install FFmpeg for playback MP3s.
+Installing the prepared dataset needs only the base dependencies. Recording
+analysis and deterministic composition use the small `audio` dependency group.
+They do not install PyTorch, CUDA or the image models from `art`.
+Install FFmpeg for playback MP3s when composing new pieces. Changes to composition
+settings and seeds reuse the measured sources; changed measurement settings need
+a newly published dataset. Startup never falls back to downloading raw corpora.
 
 ACE-Step automatically uses CUDA when available and falls back to CPU otherwise.
 For a CPU-only installation, run `uv run start --ace yes` (or set
@@ -98,6 +116,21 @@ CPU generation needs sufficient RAM for the model and takes
 longer; finished pieces play immediately on either kind of server. Compose shows
 an activity bar and the engine's current stage, with a CPU notice only when the
 server detects no CUDA.
+
+The prepared dataset is built from existing extracted audio and measurements:
+
+```bash
+uv run main.py follow dataset build
+uv run --env-file .env main.py follow dataset publish antonkulaga/whale-dolphin-orchestra
+uv run main.py follow dataset download   # install the pinned revision without raw source downloads
+```
+
+The publisher updates `resources/follow-dataset.json` with the immutable Hub
+revision and bundle checksum. Source identities, archive members, extraction
+offsets and credits are kept in the dataset. FLAC preserves the prepared PCM
+samples; Parquet keeps measured timings and contours at Float64 precision.
+Original-source research remains available through the explicit `follow fetch`
+and `follow prepare` commands.
 
 - **Seat players.** Click a site to seat its recording and click again to remove it.
   A site with several recordings opens a short list. The recordings list under the

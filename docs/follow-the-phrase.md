@@ -240,12 +240,31 @@ it lists in `atlas-files.json`), which was published as a private listening page
 - `apps/sound-map/`: the Phrase Atlas app
 
 ```bash
-uv run --group art --group viz main.py follow fetch      # humpback FLAC + table, DSWP rows
-uv run --group art --group viz main.py follow prepare    # measure; animal, guide, perturbed, response stems
-git clone https://github.com/ace-step/ACE-Step-1.5 data/interim/tools/ACE-Step-1.5
-(cd data/interim/tools/ACE-Step-1.5 && uv sync)
-uv run --group art --group viz main.py follow generate --no-offload
-uv run --group art --group viz main.py follow evaluate
-uv run --group art --group viz main.py follow page
-uv run --group art --group viz python -m unittest tests.test_follow
+uv run main.py follow dataset download                  # prepared FLAC clips and Parquet measurements
+uv run start                                           # prepared dataset and GPU music setup
+uv run start --ace yes                                  # explicitly enable CPU generation without CUDA wheels
+uv run --group audio main.py follow generate --no-offload
+uv run --group audio main.py follow evaluate
+uv run --group audio main.py follow page
+uv run --group audio python -m unittest tests.test_follow
 ```
+
+The server uses the prepared Hugging Face dataset pinned in
+`resources/follow-dataset.json`. Its 22 extracted clips are packed as lossless FLAC
+in a WebDataset archive; source metadata and measured/perturbed contours are in
+Parquet with Zstandard compression. Prepared stems and playback assets are packed
+separately. The complete runtime bundle is about 78 MiB. The original recording
+archives, full annotation tables, research models and generated music are excluded.
+The bundle retains the original provider, archive/member names, excerpt offsets,
+hashes and credits. Installing it verifies checksums and restores the local
+prepared manifest without extracting the original daily archives or measuring
+the waveforms again.
+
+For a research rebuild, run `follow fetch` explicitly, then
+`uv run --group audio main.py follow prepare` and `follow catalog`. Package the
+result with `follow dataset build`, then publish with
+`follow dataset publish namespace/name`. A legacy prepared manifest can be
+packaged with `--prepared-config path/to/its-original-config.json` when only
+composition settings changed; the builder verifies the original config hash and
+requires identical preparation settings. Composition, seed and model changes do
+not invalidate the measured inputs.

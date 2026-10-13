@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 import orchestra
+import typer
 from experiments.data import Layout
 
 
@@ -40,6 +41,15 @@ class EnvTests(unittest.TestCase):
 
 
 class AceSetupTests(unittest.TestCase):
+    def test_auto_without_gpu_does_not_install_packages_or_download_models(self):
+        with tempfile.TemporaryDirectory() as folder:
+            layout = Layout(Path(folder))
+            with mock.patch.object(orchestra, "gpu", return_value=None), \
+                    mock.patch.object(orchestra, "run") as run:
+                orchestra.ace_step(orchestra.Report(), orchestra.Ace.auto, layout)
+            self.assertFalse((layout.interim / orchestra.ACE_DIR).exists())
+        run.assert_not_called()
+
     def test_weight_downloads_exclude_unused_turbo_and_language_model(self):
         download = mock.Mock()
         modules = {
@@ -107,31 +117,110 @@ class AceSetupTests(unittest.TestCase):
 
 
 class RecordingSetupTests(unittest.TestCase):
-    def test_fresh_setup_downloads_metadata_without_installing_models(self):
-        config = {"sources": [{"id": "dolphin", "file": "long-audio/dolphin.wav"}]}
+    def test_fresh_setup_uses_prepared_dataset_without_upstream_or_audio_commands(self):
+        config = {"sources": [{"id": "dolphin"}], "config_sha256": "current"}
         with tempfile.TemporaryDirectory() as folder:
             report = orchestra.Report()
+            layout = Layout(Path(folder))
+
+            def install(data, settings):
+                from experiments.data import write_json
+                write_json(data.output / "follow" / "catalog.json", {"config_sha256": "current"})
+
             with mock.patch.object(orchestra, "load_config", return_value=config), \
-                    mock.patch.object(orchestra, "run", return_value=True) as run:
-                orchestra.recordings(report, Layout(Path(folder)))
-        commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(commands[0], [orchestra.UV, "run", "main.py", "dclde", "metadata"])
-        self.assertEqual(commands[1][:4], [orchestra.UV, "run", "python", "-c"])
-        self.assertEqual(commands[2:], [
-            [orchestra.UV, "run", "--group", "audio", "main.py", "follow", step]
-            for step in ("fetch", "prepare", "catalog")
-        ])
+                    mock.patch.object(orchestra, "prepared_current", return_value=False), \
+                    mock.patch.object(orchestra, "download_bundle", side_effect=install) as download, \
+                    mock.patch.object(orchestra, "run") as run:
+                orchestra.recordings(report, layout)
+        download.assert_called_once_with(layout, config)
+        run.assert_not_called()
         self.assertEqual(report.warnings, [])
 
-    def test_failed_metadata_stops_before_audio_setup_and_reports_the_fallback(self):
+
+class BuildTests(unittest.TestCase):
+    def test_failed_build_stops_start_before_downloads_or_server_launch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder) / ".env"
+            env.write_text("ORCHESTRA_PORT=3070\n")
+            with mock.patch.object(orchestra, "running", return_value=None), \
+                    mock.patch.object(orchestra, "ENV", env), \
+                    mock.patch.object(orchestra, "tools", return_value="/bun"), \
+                    mock.patch.object(orchestra, "port_free"), \
+                    mock.patch.object(orchestra, "demo_bundle"), \
+                    mock.patch.object(orchestra, "packages"), \
+                    mock.patch.object(orchestra, "run", return_value=False), \
+                    mock.patch.object(orchestra, "recordings") as recordings, \
+                    mock.patch.object(orchestra, "ace_step") as ace, \
+                    mock.patch.object(orchestra, "serve") as serve:
+                with self.assertRaises(typer.Exit):
+                    orchestra.start(3070, "127.0.0.1", orchestra.Ace.no)
+        recordings.assert_not_called()
+        ace.assert_not_called()
+        serve.assert_not_called()
+
+    def test_start_rebuilds_an_existing_server_without_restarting_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            built = Path(folder) / "server.js"
+            built.touch()
+            with mock.patch.object(orchestra, "running", return_value={"url": "http://localhost:3070", "pid": 123}), \
+                    mock.patch.object(orchestra, "tools", return_value="/bun"), \
+                    mock.patch.object(orchestra, "packages"), \
+                    mock.patch.object(orchestra, "BUILT_SERVER", built), \
+                    mock.patch.object(orchestra, "run", return_value=True) as run, \
+                    mock.patch.object(orchestra, "serve") as serve, \
+                    mock.patch.object(orchestra, "recordings") as recordings:
+                orchestra.start(3070, "127.0.0.1", orchestra.Ace.no)
+        run.assert_called_once_with(["/bun", "run", "build"], cwd=orchestra.APP)
+        serve.assert_not_called()
+        recordings.assert_not_called()
+
+    def test_process_detection_accepts_the_built_app_but_not_other_bun_servers(self):
+        command = b"/bun\0" + str(orchestra.BUILD / "releases" / "release-test" / "server.js").encode() + b"\0"
+        with mock.patch.object(orchestra, "alive", return_value=True), \
+                mock.patch.object(Path, "read_bytes", return_value=command):
+            self.assertTrue(orchestra.ours(123))
+        with mock.patch.object(orchestra, "alive", return_value=True), \
+                mock.patch.object(Path, "read_bytes", return_value=b"/bun\0/other-app/server.js\0"):
+            self.assertFalse(orchestra.ours(123))
+
+    def test_failed_dataset_never_falls_back_to_downloading_corpora(self):
         with tempfile.TemporaryDirectory() as folder:
             report = orchestra.Report()
             with mock.patch.object(orchestra, "load_config", return_value={"sources": []}), \
-                    mock.patch.object(orchestra, "run", return_value=False) as run:
+                    mock.patch.object(orchestra, "prepared_current", return_value=False), \
+                    mock.patch.object(orchestra, "download_bundle", side_effect=OSError("offline")), \
+                    mock.patch.object(orchestra, "run") as run:
                 orchestra.recordings(report, Layout(Path(folder)))
-        run.assert_called_once_with([orchestra.UV, "run", "main.py", "dclde", "metadata"])
+        run.assert_not_called()
         self.assertEqual(len(report.warnings), 1)
-        self.assertIn("Until then the app plays the demo bundle", report.warnings[0])
+        self.assertIn("Startup does not download source corpora", report.warnings[0])
+
+    def test_changed_composition_only_refreshes_catalog(self):
+        config = {"sources": [{"id": "dolphin"}], "config_sha256": "new-composition"}
+        with tempfile.TemporaryDirectory() as folder:
+            report = orchestra.Report()
+            layout = Layout(Path(folder))
+            with mock.patch.object(orchestra, "load_config", return_value=config), \
+                    mock.patch.object(orchestra, "prepared_current", return_value=True), \
+                    mock.patch.object(orchestra, "download_bundle") as download, \
+                    mock.patch.object(orchestra, "run", return_value=True) as run:
+                orchestra.recordings(report, layout)
+        download.assert_not_called()
+        run.assert_called_once_with(orchestra.PYTHON + ["main.py", "follow", "catalog", "--data-dir", str(layout.root)])
+
+    def test_ready_setup_needs_no_downloads_or_python_subprocess(self):
+        from experiments.data import write_json
+        config = {"sources": [{"id": "dolphin"}], "config_sha256": "current"}
+        with tempfile.TemporaryDirectory() as folder:
+            layout = Layout(Path(folder))
+            write_json(layout.output / "follow" / "catalog.json", {"config_sha256": "current"})
+            with mock.patch.object(orchestra, "load_config", return_value=config), \
+                    mock.patch.object(orchestra, "prepared_current", return_value=True), \
+                    mock.patch.object(orchestra, "download_bundle") as download, \
+                    mock.patch.object(orchestra, "run") as run:
+                orchestra.recordings(orchestra.Report(), layout)
+        download.assert_not_called()
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

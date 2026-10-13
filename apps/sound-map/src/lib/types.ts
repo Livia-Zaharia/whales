@@ -170,6 +170,7 @@ export type CombineMessage =
   | { type: "done"; manifest: Manifest }
   | { type: "error"; message: string };
 export interface GenerationRuntime {
+  python_available: boolean;
   ace_available: boolean;
   cuda_available: boolean | null;
   device: "cuda" | "cpu" | null;

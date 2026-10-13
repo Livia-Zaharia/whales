@@ -25,6 +25,7 @@ from urllib.request import urlopen
 import typer
 
 from .data import DEFAULT_DATA, Layout, ROOT, digest, get_json, now, read_json, write_json
+from .follow_dataset import app as dataset_app, preparation_hash
 
 CONFIG = ROOT / "resources" / "follow-music.json"
 RUNNER = Path(__file__).with_name("follow_ace.py")
@@ -470,7 +471,8 @@ def prepare(layout: Layout, config: dict, only: list[str] | None = None):
             "stems": {name: str(path.relative_to(output)) for name, path in stems.items()},
         }
         print(f"{source['id']}: {len(events)} events {counts}, shift {shift:+d} octaves, {duration:.1f} s", flush=True)
-    write_json(manifest_path, {"created_at_utc": now(), "config_sha256": config["config_sha256"], "sample_rate": rate,
+    write_json(manifest_path, {"created_at_utc": now(), "config_sha256": config["config_sha256"],
+                               "preparation_sha256": preparation_hash(config), "sample_rate": rate,
                                "perturbation": config["perturbation"], "response": config["response"]["interpretation"],
                                "sources": [previous[s["id"]] for s in config["sources"] if s["id"] in previous]})
     return manifest_path
@@ -526,6 +528,7 @@ def generate(layout: Layout, config: dict, ace_root: Path | None = None, conditi
 # --- CLI ---------------------------------------------------------------------------------------
 
 app = typer.Typer(help="Music that follows the animal phrase: guides, responses, ACE-Step and alignment tests.", no_args_is_help=True)
+app.add_typer(dataset_app, name="dataset")
 DataOption = Annotated[Path, typer.Option(help="Root containing input/, interim/, output/.")]
 SourcesOption = Annotated[list[str] | None, typer.Option("--source", help="Limit to these source IDs (repeatable).")]
 
