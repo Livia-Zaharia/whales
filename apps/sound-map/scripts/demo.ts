@@ -109,7 +109,7 @@ whenever \`data/output/follow\` has not been built, so \`bun run dev\` works on 
 Making new combinations still needs the Python pipeline. Regenerate with \`bun scripts/demo.ts\`.
 
 Excerpt choices, measurement settings and download URLs are in \`resources/follow-music.json\`;
-the method is in \`docs/follow-the-phrase.md\`. Guides, responses and ACE-Step stems are generated;
+the method is in \`docs/follow-the-phrase.md\`. Guides, responses and model outputs are generated;
 only the animal stems are recordings.
 
 ## Sources
@@ -120,7 +120,7 @@ ${rows.join("\n")}
 
 ## Combinations
 
-| Id | Title | Parts | ACE-Step |
+| Id | Title | Parts | Generated music |
 |---|---|---|---|
 ${combos.join("\n")}
 `);

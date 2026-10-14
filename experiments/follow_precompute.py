@@ -93,7 +93,7 @@ def render_piece(args):
         paths = generation_paths(folder, combo["ace"]["seed"], model_variant, music_model(model_variant))
         if not paths["wav"].exists() or not paths["results"].exists():
             raise ValueError(f"Missing generated music in {folder}; rerun the batch to resume")
-    return combine(layout, config, spec, run_model=finalize, model_variant=model_variant)
+    return combine(layout, config, spec, run_model=finalize, model_variant=model_variant, guide_only=not finalize)
 
 
 def matching_base_job(results: dict, expected: dict, checkpoint: str):

@@ -174,7 +174,12 @@ class CombineTests(unittest.TestCase):
 
         root = self.layout.output / "follow"
         originals = {sid: (root / f"{sid}/animal.wav").read_bytes() for sid in ("hb", "sp")}
-        path = combine(self.layout, self.config, {"parts": [{"source": "hb"}, {"source": "sp"}]}, run_model=False)
+        spec = {"parts": [{"source": "hb"}, {"source": "sp"}]}
+        guide = combine(self.layout, self.config, spec, run_model=False, guide_only=True)
+        guide_bytes = guide.read_bytes()
+        self.assertEqual([file.name for file in guide.parent.iterdir()], ["guide.wav"])
+        path = combine(self.layout, self.config, spec, run_model=False)
+        self.assertEqual(guide.read_bytes(), guide_bytes)
         manifest = read_json(path)
         for part in manifest["parts"]:
             self.assertEqual(part["files"]["animal"], f"{part['source']}/animal.mp3")

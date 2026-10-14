@@ -274,7 +274,7 @@ def shared_part_audio(output, config, item, duration, signals):
 
 
 def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = None, run_model: bool = True, offload: bool = False,
-            reuse: bool = True, model_variant: str | None = None):
+            reuse: bool = True, model_variant: str | None = None, guide_only: bool = False):
     """Write stems, listening files and manifest.json for one combination; returns the manifest path."""
     import numpy as np
 
@@ -290,7 +290,7 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
     if combo["duration_s"] > model.get("max_duration_s", float("inf")):
         raise ValueError(f"{model['label']} supports pieces up to {model['max_duration_s']} seconds. Shorten the piece or choose another model.")
     folder = output / "combos" / combo["id"]
-    reused = saved_render(folder, output, bool(combo["ace"] and run_model), model_variant) if reuse else None
+    reused = saved_render(folder, output, bool(combo["ace"] and run_model), model_variant) if reuse and not guide_only else None
     if reused:
         report_progress(99, "Opening the saved composition…")
         print(f"Reusing the saved render → combos/{combo['id']}/manifest.json")
@@ -321,6 +321,10 @@ def combine(layout: Layout, config: dict, spec: dict, ace_root: Path | None = No
                              "events": event_data(events), "onsets_s": [round(t, 4) for t in onsets(events)]})
     peak = max(float(np.max(np.abs(x))) for x in [*mixes.values(), *(layer[name] for layer in layers for name in ("animal", "guide"))])
     scale = min(1.0, .9 / peak) if peak > 0 else 1.0
+    if guide_only:
+        # Batches need only the exact conditioning WAV before inference. Playback
+        # encoding, images and scores are produced once, after the music is ready.
+        return write_wav(folder / "guide.wav", mixes["guide"] * scale, rate)
     stems = {}
     report_progress(20, "Combining the recordings and musical guides…")
     for name, mix in mixes.items():
