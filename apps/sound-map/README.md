@@ -5,8 +5,7 @@ then compose one piece from all their measured phrases with ACE-Step 1.5. While 
 plays, each recording site pulses on its own onsets and the arcs between players
 light up.
 
-This is a **pre-project prototype for the HIFMB × HWK ArtWaves residency proposal**
-([call](https://hifmb.de/transfer/art-science/air/)), live at
+This is a working prototype, live at
 [whales.liviazaharia.com](https://whales.liviazaharia.com/); the main
 [README](../../README.md) has screenshots.
 The interface takes its visual cues from a vineyard concert hall: curved seating
@@ -41,23 +40,6 @@ voices remain playable. The technical tab links the dataset paper and scopes its
   with actual spectrograms, measured onsets and pitch contours, playable original and
   guide audio; composition scores, fine-tuning, model controls, and engine logs.
   `?view=technical` opens this tab, including alongside a `#<piece id>` link.
-- **Installation:** four proposed setups share one central image preview: a
-  touchscreen map blackboard, a printed map table with wired site buttons, a
-  physical wall map with buttons, or a floor map with a nearby touchscreen.
-  The orchestra has more than six permanent species positions, arranged like an
-  orchestra pit with curved rows of chairs, music stands and miniature guide
-  instruments. Visitors select up to six chairs per composition; the figures stay
-  in place. LEDs mark selected chairs, vary in brightness as each animal plays,
-  and use colour to show conservation status from `src/lib/status.ts`.
-  A PC handles audio combination, generation, playback and the display. Proper
-  room speakers play the orchestra, while a separate screen shows spectrograms
-  and the recorded → measured → generated layers with a shared playback playhead.
-  Practical details and a short invitation to collaborate with researchers follow
-  the images. The concepts show the proposed controls and orchestra-pit layout.
-  The room is a proposal to build with residency or other
-  funding; hardware selection, screen synchronisation and spatial playback still need
-  development. Images and generation prompts are in `demo/follow/installation/`,
-  preserved by the demo refresh and included in the static export. `?view=installation`.
 - **About:** Livia Zaharia and Anton Kulaga, with links and the GitHub repository.
   `?view=about`. Photos are in `demo/follow/about/` and are copied by the export.
 
@@ -163,7 +145,7 @@ Static hosting plays the exported pieces and does not run composition.
 | `src/player.ts` | WebAudio playback: every stem starts on the same clock; toggles change gains only |
 | `src/lanes.ts` | Spectrogram lanes with each part's onsets and contours, envelopes, scores |
 | `src/lib/` | Pure logic shared by UI, server and tests |
-| `src/silver-viewer.ts`, `src/silver.css` | The **Sound to silver** view (`?view=silver`): the ring-bending animation integrated into the page, the selected ring's photograph and planned STL/download and installation editions. The viewer module is served from `/silver/viewer.js` using `/silver/files/` data (`data/output/silver`, else `demo/silver`; refresh the copy with `bun scripts/silver.ts`). The six exploratory tabs remain in unlinked `research/silver-ideas.html`; `/silver` redirects to the public view, and the static export hides it |
+| `src/silver-viewer.ts`, `src/silver.css` | The **Sound to silver** view (`?view=silver`): the ring-bending animation integrated into the page, the selected ring's photograph and planned STL/download and exhibition editions. The viewer module is served from `/silver/viewer.js` using `/silver/files/` data (`data/output/silver`, else `demo/silver`; refresh the copy with `bun scripts/silver.ts`). The six exploratory tabs remain in unlinked `research/silver-ideas.html`; `/silver` redirects to the public view, and the static export hides it |
 
 A combination spec looks like this:
 

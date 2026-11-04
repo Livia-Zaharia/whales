@@ -426,8 +426,6 @@ input[type="range"] { width: 100% }
 .proposal { margin-top: 18px; border-top: 1px solid var(--rule); padding: 18px 22px 0; background: #faf8f2f2 }
 .proposal-intro { line-height: 1.6 }
 .proposal-intro h2 { display: inline; margin-right: 8px; font: 400 1.2rem/1.4 var(--serif); letter-spacing: -.015em }
-.proposal-residency { display: none; font-size: .74rem; color: var(--muted) }
-.wrap:has(#concert-panel:not([hidden])) .proposal-residency { display: inline }
 .proposal a { color: var(--ink) }
 .footer-details { display: grid; gap: 5px; margin-top: 12px }
 .proposal .small { max-width: none; font-size: .65rem; line-height: 1.6; color: var(--muted) }
@@ -565,53 +563,15 @@ input[type="range"] { width: 100% }
   #hall-seats li { font-size: .58rem }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto } .pulse { display: none } }
-/* Installation and About views */
+/* About view */
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden }
 .gh { display: inline-flex; align-items: center; gap: 6px }
 .gh svg { flex: none; width: 1.1em; height: 1.1em; fill: currentColor }
 .footer-line { flex-wrap: wrap }
 .footer-line a { color: var(--muted) }
 .footer-line a:hover { color: var(--accent) }
-/* Physical installation: concept images lead, with practical and research details in open sections. */
-.installation { max-width: 1360px; margin-inline: auto; padding: 36px clamp(18px, 2vw, 32px); gap: 36px; background: #f4f1e9f5 }
-.inst-intro { display: block }
-.inst-intro .technical-hero { padding-top: 0 }
-.inst-intro h1 { font-size: clamp(2.6rem, 3.8vw, 4.1rem) }
-.inst-intro .technical-hero > p { max-width: 65ch; margin-top: 24px }
-.inst-intro .text-link { margin-top: 22px }
-.inst-contexts { display: grid; gap: 12px }
-.inst-contexts .section-heading { margin: 0 }
-.context-viewer { display: grid; grid-template-columns: minmax(0, 1fr) 152px; min-width: 0; border: 1px solid var(--rule); background: var(--surface) }
-.context-preview { min-width: 0 }
-.context-panel { min-width: 0 }
-.context-main-image { min-width: 0; margin: 0 }
-.context-main-image > img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: cover; background: var(--sunk) }
-.context-main-image figcaption { padding: 8px 12px; font: .54rem/1.5 var(--mono); color: var(--muted) }
-.context-choices { display: grid; align-content: start; gap: 8px; padding: 10px; border-left: 1px solid var(--rule) }
-.context-choice { display: grid; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--rule); border-radius: 2px; background: var(--surface); color: var(--muted); text-align: left; font-size: .62rem; line-height: 1.3 }
-.context-choice img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: cover; background: var(--sunk) }
-.context-choice span { padding: 6px 8px }
-.context-choice:hover { border-color: var(--accent); color: var(--ink) }
-.context-choice[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink) }
-.context-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
-.inst-context-note { border-left: 2px solid var(--accent); padding: 6px 0 6px 12px; font-size: .72rem; color: var(--muted) }
-.inst-development { display: grid; grid-template-columns: minmax(0, .55fr) minmax(0, 1.45fr); align-items: start; gap: 12px 36px; border-top: 1px solid var(--rule); padding-top: 20px }
-.inst-section-heading .section-number { margin-bottom: 6px }
-.inst-section-heading h2 { font: 400 2rem/1.08 var(--serif); letter-spacing: -.025em }
-.inst-needs { grid-template-columns: 1fr; gap: 16px; border: 0; padding: 0; background: none }
-.inst-needs article { display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); gap: 20px; border-top: 1px solid var(--rule); padding-top: 16px }
-.inst-needs h3 { margin: 0; font: 400 1.3rem/1.15 var(--serif) }
-.inst-needs p { color: var(--muted); font-size: .82rem }
-.inst-research { border-top: 1px solid var(--rule); padding-top: 24px }
-.inst-research h2 { margin-bottom: 16px; font: 400 2rem/1.08 var(--serif); letter-spacing: -.025em }
-.inst-research-copy { max-width: 80ch; font-size: var(--step-0); color: var(--ink) }
-.inst-research-copy ul { margin: 16px 0; padding-left: 22px }
-.inst-research-copy li + li { margin-top: 12px }
-.inst-extension { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; border-top: 1px solid var(--rule); padding-top: 24px }
-.inst-extension p { max-width: 65ch; font-size: .8rem; color: var(--muted) }
-.inst-extension .text-link { font-size: .75rem }
 /* Text that sits on the hall artwork gets a paper ground, as the concert hero does. */
-.installation .technical-hero > p, .about .technical-hero > p, .installation .section-heading > p { width: fit-content; background: #faf8f2e6; box-shadow: 0 0 0 8px #faf8f2e6 }
+.about .technical-hero > p { width: fit-content; background: #faf8f2e6; box-shadow: 0 0 0 8px #faf8f2e6 }
 .about .technical-hero > p { max-width: none }
 .people { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px }
 .person { display: grid; grid-template-rows: auto 1fr; min-width: 0; border: 1px solid var(--rule); background: var(--surface) }
@@ -649,27 +609,17 @@ input[type="range"] { width: 100% }
 .gh-button:hover { background: var(--accent) }
 .about-code .text-link { margin-top: 18px }
 @media (max-width: 850px) {
-  .inst-intro, .people { grid-template-columns: 1fr }
-  .inst-development { grid-template-columns: 1fr; gap: 16px }
+  .people { grid-template-columns: 1fr }
   .about-portfolio-work { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 26px }
   .about-project:nth-child(3) { border-left: 0; padding-left: 0 }
   .about-project:nth-child(2n) { border-left: 1px solid var(--rule); padding-left: 20px }
-  .inst-intro .technical-hero > p { max-width: 65ch }
 }
 @media (max-width: 540px) {
   .about-portfolio-work { grid-template-columns: 1fr }
   .about-project + .about-project, .about-project:nth-child(2n) { border-left: 0; border-top: 1px solid var(--rule); padding: 22px 0 0 }
   .about-project-shot { max-width: 240px }
 }
-@media (max-width: 680px) {
-  .context-viewer { grid-template-columns: 1fr }
-  .context-choices { grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--rule); border-left: 0 }
-}
 @media (max-width: 540px) {
   .person-text { padding: 20px }
-  .installation { padding-block: 28px; gap: 28px }
-  .inst-intro h1 { font-size: clamp(2.1rem, 9vw, 3rem) }
-  .inst-needs article { grid-template-columns: 1fr; gap: 8px }
-  .context-choice { font-size: .58rem }
   .person-text h2 { font-size: 2.1rem }
 }

@@ -1,6 +1,6 @@
 # New science-and-art projects with whale and dolphin sound
 
-Prepared **7 October 2026** for Livia's marine residency. Eight proposals, each
+Prepared **7 October 2026** for Livia's marine art. Eight proposals, each
 with a distinct scientific question, artistic outcome and data requirement,
 ranked, with one pilot already run on this repository's assets.
 

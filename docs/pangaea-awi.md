@@ -8,9 +8,7 @@ Method: [Follow the phrase](follow-the-phrase.md)
 
 The AWI Ocean Acoustics Group (Ilse Van Opzeeland, Olaf Boebel, Karolin Thomisch and colleagues)
 records the polar oceans with moored hydrophones. These are the HAFOS moorings in the Weddell Sea
-and the FRAM observatory in Fram Strait. Ilse Van Opzeeland also leads the
-[Marine Acoustic Underwater Diversity (MAUD)](https://hifmb.de/research/working-groups/marine-acoustic-underwater-diversity-maud/)
-group at HIFMB. The group publishes the raw recordings on PANGAEA under CC-BY-4.0, together with
+and the FRAM observatory in Fram Strait. The group publishes the raw recordings on PANGAEA under CC-BY-4.0, together with
 its own label tables for some recorders. [OPUS](https://opus.aq) is AWI's listening portal for the
 same data.
 

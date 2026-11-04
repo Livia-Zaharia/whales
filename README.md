@@ -26,12 +26,11 @@ the combined guide. While it
 plays, every site pulses on its own calls, and spectrograms show what the analysis
 measured and what the model made.
 
-The repository also holds the research behind it, made for Livia's marine art
-residency proposal: which recordings exist, what their labels support, which
-models can use them, and what artists have already done with cetacean sound.
+The repository also holds the research behind it: which recordings exist, what
+their labels support, which models can use them, and what artists have already done with cetacean sound.
 
 **Live:** [whales.liviazaharia.com](https://whales.liviazaharia.com/), the working
-prototype for the HIFMB × HWK [ArtWaves residency](https://hifmb.de/transfer/art-science/air/).
+prototype.
 
 | 1 · Recorded | 2 · Measured | 3 · Guide | 4 · Generated |
 |---|---|---|---|
@@ -47,12 +46,10 @@ prototype for the HIFMB × HWK [ArtWaves residency](https://hifmb.de/transfer/ar
     <td><b>The orchestra.</b> Each seated voice is a real recording that can be played on its own.</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/technical-score.png" alt="Technical score: recorded, measured, constructed and generated stages"></td>
-    <td><img src="docs/screenshots/installation.png" alt="Installation concept: visitors around a printed ocean map table with whale figures and a wall screen"></td>
+    <td colspan="2"><img src="docs/screenshots/technical-score.png" alt="Technical score: recorded, measured, constructed and generated stages"></td>
   </tr>
   <tr>
-    <td><b>Technical score.</b> From the recording to the measured phrase, the guide and the generated music.</td>
-    <td><b>Installation.</b> The proposed listening room (AI-generated concept image).</td>
+    <td colspan="2"><b>Technical score.</b> From the recording to the measured phrase, the guide and the generated music.</td>
   </tr>
 </table>
 
@@ -225,7 +222,7 @@ the finger hole stays unchanged in all 20 runs
 
 The **Sound to silver** view centers on that animation. The next edition is
 planned in three forms: website visitors will generate and download an STL from a
-chosen recording; installations will have 3D-printed pieces prepared in advance
+chosen recording; exhibitions will have 3D-printed pieces prepared in advance
 for the default sound combinations; and a limited run of cast-silver rings will
 be offered to donors supporting marine-science and conservation causes. No
 sound-shaped ring has been cast yet. Livia's Inline Ring is the prototype; the

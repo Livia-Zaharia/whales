@@ -53,23 +53,16 @@ document.addEventListener("keydown", event => {
 });
 
 /* ---------- accessible project views ---------- */
-type View = "concert" | "technical" | "installation" | "silver" | "about";
-const VIEWS: View[] = ["concert", "technical", "installation", "silver", "about"];
+type View = "concert" | "technical" | "silver" | "about";
+const VIEWS: View[] = ["concert", "technical", "silver", "about"];
 // Server-only tabs (Sound to silver) are hidden in the static copy, so keys and URLs never land on them there.
 const viewTabs = [...document.querySelectorAll<HTMLButtonElement>("[role=tab][data-view]")]
   .filter((tab) => !(isStatic && tab.hasAttribute("data-server-only")));
-// About and Installation photos live with the demo media; lazy loading waits until their panel is shown.
+// About photos live with the demo media; lazy loading waits until their panel is shown.
 for (const img of document.querySelectorAll<HTMLImageElement>("img[data-file]")) img.src = fileUrl(img.dataset.file!);
 if (!isStatic) for (const img of document.querySelectorAll<HTMLImageElement>("img[data-silver-file]")) {
   img.src = `/silver/files/${img.dataset.silverFile!}`;
 }
-const contextChoices = [...document.querySelectorAll<HTMLButtonElement>("[data-context-choice]")];
-const contextPanels = [...document.querySelectorAll<HTMLElement>("[data-context-panel]")];
-for (const choice of contextChoices) choice.addEventListener("click", () => {
-  const selected = choice.dataset.contextChoice;
-  for (const option of contextChoices) option.setAttribute("aria-pressed", String(option === choice));
-  for (const panel of contextPanels) panel.toggleAttribute("hidden", panel.dataset.contextPanel !== selected);
-});
 // Links to server routes (such as /silver) have no target in the static copy.
 if (isStatic) for (const link of document.querySelectorAll<HTMLElement>("[data-server-only]")) link.hidden = true;
 function showView(view: View, scroll = false, sectionId?: string) {

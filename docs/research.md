@@ -1,4 +1,4 @@
-# Cetacean audio for Livia's marine residency
+# Cetacean audio for Livia's marine art
 
 Start with the [dataset guide](datasets.md) and [model guide](models.md) for
 comparison tables; this overview connects them to the artistic questions.
@@ -103,18 +103,3 @@ Keep original sample rates and band limits in the manifest. Downsampling a
 can materially change the signals available to an encoder. An encoder's mel
 filter range can narrow the band further.
 
-## Residency framing
-
-An application direction: **“Acoustic portraits and relationships: translating
-cetacean vocal identity, rhythm, and observed interaction into evolving visual
-forms.”** Start with documented signal structure and let collaborations with
-marine researchers determine which contextual layers can responsibly guide the
-work. A useful output could let a viewer move between the recording, its
-annotation, and alternative visual interpretations.
-
-The residency emphasizes exchange with scientists, new artistic work, and
-presentations at both institutions. The
-[official HIFMB call](https://hifmb.de/transfer/art-science/air/) (checked 8 October
-2026) confirms 11 October 2026 as the deadline and asks projects to address
-Ocean Decade Challenge 2, "Protect and restore ecosystems and biodiversity".
-[TransArtists listing](https://www.transartists.org/en/air/helmholtz-institute-functional-marine-biodiversity-hanse-wissenschaftskolleg-institute-advanced)

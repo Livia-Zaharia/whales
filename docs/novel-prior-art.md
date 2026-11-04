@@ -15,7 +15,7 @@ dolphin painting, whale music, Pattern Radio, CHAT).
 
 ## Livia's own precedents
 
-The strongest precedents for this residency are Livia's own pieces. They show
+The strongest precedents for this work are Livia's own pieces. They show
 sound already entering her settings, data already becoming wearable form, and
 human-versus-model prediction already in her research practice.
 
